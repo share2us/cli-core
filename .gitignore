@@ -1,0 +1,6 @@
+# Compiled binaries / test artifacts
+/share2us-cli-core
+*.exe
+*.test
+*.out
+coverage.*
