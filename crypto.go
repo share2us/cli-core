@@ -19,6 +19,22 @@ const (
 	EncryptionAlgoAES256GCM = "aes256gcm"
 	chunkSize               = 64 * 1024
 	headerSize              = 18
+	// maxChunkCiphertext caps a single framed chunk so a hostile stream cannot
+	// force a huge allocation. A chunk is at most chunkSize of plaintext plus the
+	// GCM tag; the slack absorbs the tag and any future framing bytes.
+	maxChunkCiphertext = chunkSize + 64
+)
+
+const (
+	encVersionMajor = 1
+	// encVersionLegacy (1,1) terminated the stream with an UNAUTHENTICATED
+	// zero-length marker, so a tail-truncated ciphertext decrypted as a clean
+	// EOF. Still read for backward compatibility; never written.
+	encVersionLegacy = 1
+	// encVersionAEAD (1,2) authenticates end-of-stream: every chunk carries a
+	// final flag bound into the AEAD additional data, so truncation (or any
+	// header/format tampering) fails the tag instead of passing silently.
+	encVersionAEAD = 2
 )
 
 var (
@@ -160,28 +176,54 @@ func EncryptStream(dst io.Writer, src io.Reader, key []byte) error {
 	}
 	header := make([]byte, 0, headerSize)
 	header = append(header, encryptionMagic[:]...)
-	header = append(header, 1, 1)
+	header = append(header, encVersionMajor, encVersionAEAD)
 	header = append(header, nonceBase...)
 	if _, err := dst.Write(header); err != nil {
 		return err
 	}
-	buf := make([]byte, chunkSize)
+	// One-chunk lookahead so the last chunk can be flagged final before it is
+	// sealed. The final flag is authenticated (folded into the AAD), which is
+	// what makes a truncated tail detectable on decrypt.
+	bufs := [2][]byte{make([]byte, chunkSize), make([]byte, chunkSize)}
+	cur := 0
+	n, eof, err := readChunk(src, bufs[cur])
+	if err != nil {
+		return err
+	}
 	for counter := uint64(0); ; counter++ {
-		n, readErr := io.ReadFull(src, buf)
-		if readErr == io.ErrUnexpectedEOF || readErr == io.EOF {
-			if n > 0 {
-				if err := writeEncryptedChunk(dst, aead, nonceBase, counter, buf[:n]); err != nil {
-					return err
-				}
-			}
-			return binary.Write(dst, binary.BigEndian, uint32(0))
+		if eof {
+			// The current chunk is the last one (empty on an empty input).
+			return writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], true)
 		}
-		if readErr != nil {
-			return readErr
+		nxt := 1 - cur
+		n2, eof2, rerr := readChunk(src, bufs[nxt])
+		if rerr != nil {
+			return rerr
 		}
-		if err := writeEncryptedChunk(dst, aead, nonceBase, counter, buf); err != nil {
+		if eof2 && n2 == 0 {
+			// Nothing follows the current chunk, so it is the final one.
+			return writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], true)
+		}
+		if err := writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], false); err != nil {
 			return err
 		}
+		cur, n, eof = nxt, n2, eof2
+	}
+}
+
+// readChunk fills buf with up to len(buf) bytes. eof reports that the stream is
+// exhausted; n may still be > 0 when the final chunk is short.
+func readChunk(src io.Reader, buf []byte) (n int, eof bool, err error) {
+	n, err = io.ReadFull(src, buf)
+	switch err {
+	case nil:
+		return n, false, nil
+	case io.EOF:
+		return 0, true, nil
+	case io.ErrUnexpectedEOF:
+		return n, true, nil
+	default:
+		return 0, false, err
 	}
 }
 
@@ -194,10 +236,60 @@ func DecryptStream(dst io.Writer, src io.Reader, key []byte) error {
 	if _, err := io.ReadFull(src, header); err != nil {
 		return fmt.Errorf("read encrypted header: %w", err)
 	}
-	if string(header[:4]) != string(encryptionMagic[:]) || header[4] != 1 || header[5] != 1 {
+	if string(header[:4]) != string(encryptionMagic[:]) || header[4] != encVersionMajor {
 		return errors.New("unsupported encrypted share format")
 	}
 	nonceBase := header[6:]
+	switch header[5] {
+	case encVersionAEAD:
+		return decryptStreamAEAD(dst, src, aead, header, nonceBase)
+	case encVersionLegacy:
+		return decryptStreamLegacy(dst, src, aead, nonceBase)
+	default:
+		return errors.New("unsupported encrypted share format")
+	}
+}
+
+// decryptStreamAEAD reads the authenticated (1,2) framing. Each chunk is
+// [uint32 len][finalByte][ciphertext]; the finalByte is bound into the AAD, so
+// only the encryptor can produce the end-of-stream chunk. A stream that ends
+// without a final chunk (a truncated tail) surfaces as an error rather than a
+// silent short read.
+func decryptStreamAEAD(dst io.Writer, src io.Reader, aead cipher.AEAD, header, nonceBase []byte) error {
+	for counter := uint64(0); ; counter++ {
+		var length uint32
+		if err := binary.Read(src, binary.BigEndian, &length); err != nil {
+			return fmt.Errorf("encrypted stream ended before the final chunk (truncated?): %w", err)
+		}
+		if length == 0 || length > maxChunkCiphertext {
+			return errors.New("invalid encrypted chunk length")
+		}
+		var finalByte [1]byte
+		if _, err := io.ReadFull(src, finalByte[:]); err != nil {
+			return fmt.Errorf("read encrypted chunk flag: %w", err)
+		}
+		ciphertext := make([]byte, length)
+		if _, err := io.ReadFull(src, ciphertext); err != nil {
+			return fmt.Errorf("read encrypted chunk: %w", err)
+		}
+		plaintext, err := aead.Open(nil, nonceFor(nonceBase, counter), ciphertext, chunkAAD(header, finalByte[0]))
+		if err != nil {
+			return fmt.Errorf("decrypt encrypted share: %w", err)
+		}
+		if _, err := dst.Write(plaintext); err != nil {
+			return err
+		}
+		if finalByte[0] == 1 {
+			return nil
+		}
+	}
+}
+
+// decryptStreamLegacy reads the pre-1.2 (1,1) framing for shares encrypted
+// before the authenticated terminator existed. It is truncation-vulnerable by
+// construction (the zero-length terminator is unauthenticated); kept only so old
+// ciphertexts remain readable. New shares are always written as 1.2.
+func decryptStreamLegacy(dst io.Writer, src io.Reader, aead cipher.AEAD, nonceBase []byte) error {
 	for counter := uint64(0); ; counter++ {
 		var length uint32
 		if err := binary.Read(src, binary.BigEndian, &length); err != nil {
@@ -205,6 +297,9 @@ func DecryptStream(dst io.Writer, src io.Reader, key []byte) error {
 		}
 		if length == 0 {
 			return nil
+		}
+		if length > maxChunkCiphertext {
+			return errors.New("invalid encrypted chunk length")
 		}
 		ciphertext := make([]byte, length)
 		if _, err := io.ReadFull(src, ciphertext); err != nil {
@@ -248,16 +343,36 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 
-func writeEncryptedChunk(dst io.Writer, aead cipher.AEAD, nonceBase []byte, counter uint64, plaintext []byte) error {
-	ciphertext := aead.Seal(nil, nonceFor(nonceBase, counter), plaintext, nil)
+// writeSealedChunk emits one authenticated chunk: [uint32 len][finalByte][ct].
+// The final flag is carried in the AAD (see chunkAAD), so the end-of-stream
+// signal cannot be forged or moved by anyone without the key.
+func writeSealedChunk(dst io.Writer, aead cipher.AEAD, header, nonceBase []byte, counter uint64, plaintext []byte, final bool) error {
+	finalByte := byte(0)
+	if final {
+		finalByte = 1
+	}
+	ciphertext := aead.Seal(nil, nonceFor(nonceBase, counter), plaintext, chunkAAD(header, finalByte))
 	if len(ciphertext) > int(^uint32(0)) {
 		return errors.New("encrypted chunk too large")
 	}
 	if err := binary.Write(dst, binary.BigEndian, uint32(len(ciphertext))); err != nil {
 		return err
 	}
+	if _, err := dst.Write([]byte{finalByte}); err != nil {
+		return err
+	}
 	_, err := dst.Write(ciphertext)
 	return err
+}
+
+// chunkAAD binds the header (magic, version, nonce base) and the end-of-stream
+// flag into a chunk's additional authenticated data. Tampering with the format
+// version, the nonce base, or the final flag then fails the GCM tag.
+func chunkAAD(header []byte, finalByte byte) []byte {
+	aad := make([]byte, 0, len(header)+1)
+	aad = append(aad, header...)
+	aad = append(aad, finalByte)
+	return aad
 }
 
 func nonceFor(base []byte, counter uint64) []byte {
