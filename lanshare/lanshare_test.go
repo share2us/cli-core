@@ -191,6 +191,30 @@ func TestOverwriteRefused(t *testing.T) {
 	}
 }
 
+func TestOverwriteReplaces(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dup.bin"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+	})
+	defer cancel()
+
+	if _, err := Send(context.Background(), "dup.bin", 3, false, bytes.NewReader([]byte("new")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err != nil {
+		t.Fatalf("Send with --overwrite: %v", err)
+	}
+	out := <-outCh
+	if out.err != nil {
+		t.Fatalf("receiver error: %v", out.err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "dup.bin"))
+	if string(got) != "new" {
+		t.Fatalf("file content = %q, want %q", got, "new")
+	}
+}
+
 func TestAllowIPAllowed(t *testing.T) {
 	dir := t.TempDir()
 	info, outCh, cancel := startReceiver(t, ReceiveOptions{

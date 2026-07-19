@@ -296,7 +296,7 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 
 	// Receive the stream into a temp file in the destination dir, then rename.
 	_ = conn.SetDeadline(time.Time{})
-	written, sum, rerr := receiveToFile(ctx, conn, outPath, h.Size, opts.OnProgress)
+	written, sum, rerr := receiveToFile(ctx, conn, outPath, h.Size, opts.Overwrite, opts.OnProgress)
 	if rerr != nil {
 		sendError(conn, "write failed")
 		return ReceiveResult{}, true, rerr
@@ -313,7 +313,7 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 }
 
 // receiveToFile reads msgData frames until msgEOF, hashing, writing atomically.
-func receiveToFile(ctx context.Context, conn net.Conn, outPath string, total int64, onProgress func(received, total int64)) (int64, string, error) {
+func receiveToFile(ctx context.Context, conn net.Conn, outPath string, total int64, overwrite bool, onProgress func(received, total int64)) (int64, string, error) {
 	dir := filepath.Dir(outPath)
 	tmp, err := os.CreateTemp(dir, ".s2u-partial-*")
 	if err != nil {
@@ -369,8 +369,8 @@ func receiveToFile(ctx context.Context, conn net.Conn, outPath string, total int
 			if err := tmp.Close(); err != nil {
 				return 0, "", err
 			}
-			if err := os.Rename(tmpName, outPath); err != nil {
-				return 0, "", fmt.Errorf("lanshare: finalize %s: %w", outPath, err)
+			if err := placeFile(tmpName, outPath, overwrite); err != nil {
+				return 0, "", err
 			}
 			cleanup = false
 			return received, hex.EncodeToString(digest.Sum(nil)), nil
@@ -378,6 +378,28 @@ func receiveToFile(ctx context.Context, conn net.Conn, outPath string, total int
 			return 0, "", fmt.Errorf("lanshare: unexpected frame type %d during transfer", typ)
 		}
 	}
+}
+
+// placeFile moves the staged temp file to outPath. Without overwrite it uses a
+// hard link, which fails atomically if outPath already exists — closing the race
+// between handleConn's earlier existence check and here, so a file that appears
+// mid-transfer can no longer be silently clobbered. With overwrite it renames
+// (replacing the name; os.Rename does not write through a symlink at the target).
+func placeFile(tmpName, outPath string, overwrite bool) error {
+	if overwrite {
+		if err := os.Rename(tmpName, outPath); err != nil {
+			return fmt.Errorf("lanshare: finalize %s: %w", outPath, err)
+		}
+		return nil
+	}
+	if err := os.Link(tmpName, outPath); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("lanshare: %q already exists; re-run the receiver with --overwrite", filepath.Base(outPath))
+		}
+		return fmt.Errorf("lanshare: finalize %s: %w", outPath, err)
+	}
+	_ = os.Remove(tmpName)
+	return nil
 }
 
 // listen binds either the pinned port (hard error if taken) or the first free
