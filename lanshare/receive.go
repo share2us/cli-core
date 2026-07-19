@@ -21,6 +21,11 @@ const (
 	DefaultPort = 4300
 	// portRangeEnd is the last port in the auto-bind range (inclusive).
 	portRangeEnd = 4600
+	// maxTransferBytes is an absolute ceiling on a single transfer, independent
+	// of the size the sender declares. A hostile peer cannot fill the receiver's
+	// disk by declaring a tiny size and streaming forever (the stream is held to
+	// the declared size, see receiveToFile) nor by declaring an absurd one.
+	maxTransferBytes int64 = 1 << 40 // 1 TiB
 )
 
 // Auth modes reported in ListenInfo.Mode.
@@ -245,6 +250,10 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		sendError(conn, "unsupported protocol version")
 		return ReceiveResult{}, false, nil
 	}
+	if h.Size < 0 || h.Size > maxTransferBytes {
+		sendError(conn, "declared transfer size is out of range")
+		return ReceiveResult{}, false, nil
+	}
 
 	// Authenticate. The PAKE runs iff the SENDER offered a password (keeps both
 	// sides in lockstep). Authorization: a password sender must pass the PAKE; a
@@ -337,15 +346,23 @@ func receiveToFile(ctx context.Context, conn net.Conn, outPath string, total int
 		}
 		switch typ {
 		case msgData:
+			// Hold the stream to the size the sender declared, so a peer cannot
+			// declare a tiny size and stream forever to fill the disk.
+			received += int64(len(payload))
+			if received > total {
+				return 0, "", fmt.Errorf("lanshare: sender exceeded declared size (%d > %d bytes)", received, total)
+			}
 			if _, werr := tmp.Write(payload); werr != nil {
 				return 0, "", werr
 			}
 			_, _ = digest.Write(payload)
-			received += int64(len(payload))
 			if onProgress != nil {
 				onProgress(received, total)
 			}
 		case msgEOF:
+			if received != total {
+				return 0, "", fmt.Errorf("lanshare: incomplete transfer: got %d of %d bytes", received, total)
+			}
 			if err := tmp.Sync(); err != nil {
 				return 0, "", err
 			}
