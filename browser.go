@@ -2,16 +2,35 @@ package clicore
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os/exec"
 	"runtime"
 	"strings"
 )
 
-func OpenBrowser(rawURL string) error {
-	rawURL = strings.TrimSpace(rawURL)
+// validateBrowserURL only accepts real web URLs. OpenBrowser hands the value to
+// the OS launcher (open / xdg-open / rundll32), and the value can come from a
+// server response (device-code verification_uri), so a non-web scheme (file://,
+// a custom-scheme handler) or a flag-like value must not reach the launcher.
+func validateBrowserURL(rawURL string) error {
 	if rawURL == "" {
 		return errors.New("browser URL is empty")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid browser URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("refusing to open non-web URL scheme %q", parsed.Scheme)
+	}
+	return nil
+}
+
+func OpenBrowser(rawURL string) error {
+	rawURL = strings.TrimSpace(rawURL)
+	if err := validateBrowserURL(rawURL); err != nil {
+		return err
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
