@@ -118,9 +118,9 @@ Secret scan:
 
 Email shares:
   --email EMAIL               Share with a recipient email; repeat or comma-separate.
-                              If a single recipient is a contact (a Share2Us user with a
-                              device who accepts your shares), it is delivered end-to-end to
-                              their device; otherwise it is a recipient-restricted link.
+                              Creates a recipient-restricted link the recipient opens in
+                              the browser after verifying their identity. For device
+                              end-to-end delivery use --contact instead.
   --to EMAIL                  Alias for --email
   --unrestrict                Let recipients reshare this private share (save it to
                               their own account and share it onward).
