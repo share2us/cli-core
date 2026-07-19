@@ -440,7 +440,10 @@ func (s *webrtcSession) flushPendingICE() {
 func (s *webrtcSession) verifyPeer(ctx context.Context) error {
 	secret := strings.TrimSpace(s.cfg.Secret)
 	if secret == "" {
-		return nil // secretless mode (e.g. tests) — no SAS verification
+		if s.cfg.Insecure {
+			return nil // explicit opt-out (test-only); no SAS verification
+		}
+		return errors.New("p2p: refusing to connect without a peer-verification secret")
 	}
 	if s.dcCtrl == nil {
 		return errors.New("p2p: control channel unavailable for verification")

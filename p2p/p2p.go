@@ -70,8 +70,13 @@ type RelayConfig struct {
 	// Secret is the out-of-band shared secret (the private half of the full
 	// pairing code, never sent to the relay). It keys the SAS peer verification
 	// in Connect, so a MITM relay that swapped DTLS fingerprints is detected.
-	// Empty disables verification (e.g. tests / secretless mode).
+	// An empty Secret refuses to connect unless Insecure is also set.
 	Secret string
+	// Insecure, with an empty Secret, connects WITHOUT SAS peer verification.
+	// TEST-ONLY: production callers always derive a Secret from the pairing code,
+	// so this stays false and an empty Secret fails closed (a relay could
+	// otherwise MITM the transfer).
+	Insecure bool
 }
 
 // --- Legacy exported signaling types (kept for API compatibility) ---

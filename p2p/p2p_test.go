@@ -97,7 +97,7 @@ func connectPair(t *testing.T) (*webrtcSession, *webrtcSession) {
 	t.Helper()
 	sigS, sigR := newFakePair()
 
-	cfg := RelayConfig{PairingCode: "S2S-TEST-CODE"}
+	cfg := RelayConfig{PairingCode: "S2S-TEST-CODE", Insecure: true}
 	ss, err := newWebRTCSession(cfg, Sender, sigS)
 	if err != nil {
 		t.Fatalf("new sender: %v", err)
