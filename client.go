@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,12 +22,30 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-var DefaultHTTPClient = http.DefaultClient
+// DefaultHTTPClient bounds connection setup and slow-header responses so a slow
+// or malicious server (including a presigned-URL host) cannot pin the CLI during
+// setup. It deliberately sets no overall Timeout: file up/downloads can be long,
+// and the per-request context is what bounds total call duration.
+var DefaultHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	},
+}
 
 const (
 	maxRateLimitAttempts = 3
 	maxRateLimitWait     = 30 * time.Second
 	maxRateLimitTotal    = 60 * time.Second
+	// maxJSONResponse caps a success-path JSON body so a hostile/buggy server
+	// cannot exhaust memory on a metadata call. API responses are small.
+	maxJSONResponse = 8 << 20 // 8 MiB
 )
 
 var rateLimitBackoffBase = time.Second
@@ -867,7 +886,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in any, out an
 				io.Copy(io.Discard, resp.Body)
 				return nil
 			}
-			return json.NewDecoder(resp.Body).Decode(out)
+			return json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponse)).Decode(out)
 		}
 
 		body, readErr := readLimitedBody(resp)
@@ -1035,7 +1054,7 @@ func (c *Client) httpClient() *http.Client {
 	if c != nil && c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return http.DefaultClient
+	return DefaultHTTPClient
 }
 
 func IsAuthorizationPending(err error) bool {
