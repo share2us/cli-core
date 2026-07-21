@@ -135,11 +135,14 @@ type MeResponse struct {
 }
 
 type UploadCreateRequest struct {
-	FileName       string         `json:"file_name"`
-	SizeBytes      uint64         `json:"size_bytes"`
-	ContentClass   string         `json:"content_class,omitempty"`
-	ContentType    string         `json:"content_type,omitempty"`
-	ExpiresIn      string         `json:"expires_in,omitempty"`
+	FileName     string `json:"file_name"`
+	SizeBytes    uint64 `json:"size_bytes"`
+	ContentClass string `json:"content_class,omitempty"`
+	ContentType  string `json:"content_type,omitempty"`
+	ExpiresIn    string `json:"expires_in,omitempty"`
+	// NoExpiry keeps the share indefinitely (no expiry). When true, ExpiresIn is
+	// ignored server-side. See --keep / --expires=none.
+	NoExpiry       bool           `json:"no_expiry,omitempty"`
 	SHA256         string         `json:"sha256,omitempty"`
 	SourceRef      string         `json:"source_ref,omitempty"`
 	New            bool           `json:"new"`

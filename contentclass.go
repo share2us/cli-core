@@ -27,6 +27,10 @@ func ContentClassForNameAndType(name, contentType string) string {
 		return "7z"
 	case strings.HasSuffix(normalizedName, ".tar"):
 		return "tar"
+	case strings.HasSuffix(normalizedName, ".md"), strings.HasSuffix(normalizedName, ".markdown"):
+		return "markdown"
+	case strings.HasSuffix(normalizedName, ".yml"), strings.HasSuffix(normalizedName, ".yaml"):
+		return "text"
 	}
 
 	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
@@ -35,6 +39,8 @@ func ContentClassForNameAndType(name, contentType string) string {
 	}
 	switch mediaType {
 	case "text/plain":
+		return "text"
+	case "text/yaml", "text/x-yaml", "application/x-yaml", "application/yaml":
 		return "text"
 	case "text/csv":
 		return "csv"

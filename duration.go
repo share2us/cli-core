@@ -47,3 +47,16 @@ func DurationForAPI(value string) (string, error) {
 	}
 	return duration.String(), nil
 }
+
+// ExpiryForAPI translates a user-supplied expiry value into the wire fields for
+// the upload/reshare API. "0", "none", "never", "keep", and "forever" mean the
+// share is kept indefinitely (no expiry): noExpiry=true with an empty duration.
+// Anything else is validated as a positive finite duration via DurationForAPI.
+func ExpiryForAPI(value string) (expiresIn string, noExpiry bool, err error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "0", "none", "never", "keep", "forever":
+		return "", true, nil
+	}
+	expiresIn, err = DurationForAPI(value)
+	return expiresIn, false, err
+}
