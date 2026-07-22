@@ -20,7 +20,24 @@ type Credential struct {
 	DevicePrivateKey string `json:"device_private_key,omitempty"`
 }
 
+// CredentialPath is where the CLI stores its saved login. It mirrors ConfigPath
+// (os.UserConfigDir) so the token and config.json live together: ~/.config/share2us
+// on Linux/macOS (honoring XDG_CONFIG_HOME) and %AppData%\Roaming\share2us on
+// Windows. Before 2026-07 this used XDG/HOME directly, which on Windows put the
+// token under %USERPROFILE%\.config instead — see legacyCredentialPath.
 func CredentialPath() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "share2us", "credentials.json"), nil
+}
+
+// legacyCredentialPath is the pre-2026-07 location: XDG_CONFIG_HOME, else
+// ~/.config. Identical to CredentialPath on Linux/macOS; on Windows it is
+// %USERPROFILE%\.config (not %AppData%). Read as a fallback so an existing login
+// survives the move to os.UserConfigDir.
+func legacyCredentialPath() (string, error) {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -37,7 +54,23 @@ func LoadCredential() (Credential, error) {
 	if err != nil {
 		return Credential{}, err
 	}
-	return LoadCredentialAt(path)
+	cred, err := LoadCredentialAt(path)
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return cred, err
+	}
+	// New path absent: fall back to the legacy location (on Windows the token
+	// moved from %USERPROFILE%\.config to %AppData%). On Linux/macOS the two paths
+	// are identical, so there is nothing to fall back to.
+	legacy, lerr := legacyCredentialPath()
+	if lerr != nil || legacy == path {
+		return cred, err
+	}
+	legacyCred, lerr := LoadCredentialAt(legacy)
+	if lerr != nil {
+		return cred, err // report the original not-found, not the legacy miss
+	}
+	_ = SaveCredentialAt(path, legacyCred) // best-effort migrate forward
+	return legacyCred, nil
 }
 
 func LoadCredentialAt(path string) (Credential, error) {
