@@ -520,6 +520,30 @@ func (c *Client) DeleteTeammateSender(ctx context.Context, email string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/contacts/senders?email="+url.QueryEscape(email), nil, nil)
 }
 
+// ExposeDeviceToContact allows the given contact (by email) to target one of the
+// caller's own devices under the 'approvals' inbound mode.
+func (c *Client) ExposeDeviceToContact(ctx context.Context, email, deviceSessionID string) error {
+	return c.doJSON(ctx, http.MethodPut, "/v1/contacts/senders/devices",
+		map[string]string{"email": email, "device_session_id": deviceSessionID}, nil)
+}
+
+// UnexposeDeviceFromContact revokes a contact's access to one of the caller's devices.
+func (c *Client) UnexposeDeviceFromContact(ctx context.Context, email, deviceSessionID string) error {
+	return c.doJSON(ctx, http.MethodDelete,
+		"/v1/contacts/senders/devices?email="+url.QueryEscape(email)+"&device_session_id="+url.QueryEscape(deviceSessionID), nil, nil)
+}
+
+// ListExposedDevicesForContact returns the caller's device session ids currently
+// exposed to the given contact.
+func (c *Client) ListExposedDevicesForContact(ctx context.Context, email string) ([]string, error) {
+	var out struct {
+		Email     string   `json:"email"`
+		DeviceIDs []string `json:"device_ids"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/v1/contacts/senders/devices?email="+url.QueryEscape(email), nil, &out)
+	return out.DeviceIDs, err
+}
+
 func (c *Client) ListPendingInbox(ctx context.Context) (PendingInboxResponse, error) {
 	var out PendingInboxResponse
 	err := c.doJSON(ctx, http.MethodGet, "/v1/inbox/pending", nil, &out)
