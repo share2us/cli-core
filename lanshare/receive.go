@@ -172,6 +172,8 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 	}()
 
 	throttle := newIPThrottle(10, 5*time.Second)
+	inflight := newInflightCap(2)      // ≤2 concurrent connections per source IP
+	sem := make(chan struct{}, 8)      // ≤8 concurrent transfers overall (serve mode)
 	for {
 		conn, aerr := tlsLn.Accept()
 		if aerr != nil {
@@ -180,24 +182,73 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 			}
 			return ReceiveResult{}, fmt.Errorf("lanshare: accept: %w", aerr)
 		}
-		// Cheap per-IP flood guard before any TLS/crypto work.
-		if !throttle.allow(remoteIP(conn)) {
+		// Cheap anti-abuse guards before any TLS/crypto work: a per-IP rate
+		// throttle and a per-IP in-flight cap, so one peer can't flood the
+		// receiver or occupy many worker slots.
+		ip := remoteIP(conn)
+		if !throttle.allow(ip) || !inflight.acquire(ip) {
 			_ = conn.Close()
 			continue
 		}
-		res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
-		if done {
-			if !opts.Loop {
+		if !opts.Loop {
+			// One-shot receive: serial; the first completed transfer returns.
+			res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
+			inflight.release(ip)
+			if done {
 				return res, herr
 			}
-			// Serve mode: a completed transfer (or a per-connection local error
-			// like an overwrite refusal) does not stop the server; report a
-			// success and keep listening until the context is cancelled.
-			if herr == nil && opts.OnReceived != nil {
+			continue
+		}
+		// Serve (discoverable) mode: handle connections concurrently, bounded by
+		// sem, so one slow approval prompt can't block all other receiving.
+		sem <- struct{}{}
+		go func(conn net.Conn, ip string) {
+			defer func() { inflight.release(ip); <-sem }()
+			res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
+			if done && herr == nil && opts.OnReceived != nil {
 				opts.OnReceived(res)
 			}
+		}(conn, ip)
+	}
+}
+
+// inflightCap bounds concurrent in-progress connections per source IP, so a
+// single peer cannot occupy many worker slots (a spam/DoS guard layered on top
+// of the per-IP rate throttle).
+type inflightCap struct {
+	mu  sync.Mutex
+	n   map[string]int
+	max int
+}
+
+func newInflightCap(max int) *inflightCap {
+	return &inflightCap{n: make(map[string]int), max: max}
+}
+
+func (c *inflightCap) acquire(ip string) bool {
+	if ip == "" {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n[ip] >= c.max {
+		return false
+	}
+	c.n[ip]++
+	return true
+}
+
+func (c *inflightCap) release(ip string) {
+	if ip == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n[ip] > 0 {
+		c.n[ip]--
+		if c.n[ip] == 0 {
+			delete(c.n, ip)
 		}
-		// Non-fatal (bad peer): keep listening.
 	}
 }
 

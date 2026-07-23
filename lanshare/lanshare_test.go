@@ -410,3 +410,46 @@ func TestReceiveRejectsMaliciousFilenames(t *testing.T) {
 		t.Error("traversal basename was not written safely inside the dest dir")
 	}
 }
+
+func TestVerifyCode(t *testing.T) {
+	c := VerifyCode("aabbccdd")
+	if len(c) != 7 { // "NNN NNN"
+		t.Fatalf("code %q length = %d, want 7", c, len(c))
+	}
+	if VerifyCode("AA:BB:CC:DD") != c {
+		t.Fatal("code changed under fingerprint separators/case (normalization broken)")
+	}
+	if VerifyCode("aabbccdd") == VerifyCode("11223344") {
+		t.Fatal("distinct fingerprints produced the same code")
+	}
+	if VerifyCode("") != "" {
+		t.Fatal("empty fingerprint should yield empty code")
+	}
+}
+
+func TestServeLoopReceivesMultiple(t *testing.T) {
+	dir := t.TempDir()
+	recv := make(chan string, 8)
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+		Loop:       true,
+		OnRequest:  func(RequestInfo) bool { return true },
+		OnReceived: func(r ReceiveResult) { recv <- r.Name },
+	})
+	addr := "127.0.0.1:" + strconv.Itoa(info.Port)
+	for i := 0; i < 3; i++ {
+		if _, err := Send(context.Background(), "f"+strconv.Itoa(i)+".txt", 2, false,
+			bytes.NewReader([]byte("hi")), SendOptions{Dest: addr}); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case <-recv:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("only received %d of 3 transfers in serve/loop mode", i)
+		}
+	}
+	cancel()
+	<-outCh
+}
