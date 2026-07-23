@@ -44,6 +44,13 @@ type hello struct {
 	Size        int64  `json:"size"`
 	IsDir       bool   `json:"is_dir"`
 	HasPassword bool   `json:"has_password"`
+	// Optional sender identity (all omitempty → backward compatible; an
+	// identity-less sender is simply anonymous). IdentityPub is an Ed25519 public
+	// key; IdentitySig signs ("s2u-lan-identity-v1\0" || EKM), proving the sender
+	// holds the key for THIS TLS session. SenderName is a display label.
+	IdentityPub []byte `json:"identity_pub,omitempty"`
+	IdentitySig []byte `json:"identity_sig,omitempty"`
+	SenderName  string `json:"sender_name,omitempty"`
 }
 
 // accept is the receiver's decision after auth + local checks.

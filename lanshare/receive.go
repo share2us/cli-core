@@ -2,6 +2,7 @@ package lanshare
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -77,12 +78,17 @@ type ReceiveOptions struct {
 }
 
 // RequestInfo describes an inbound transfer an authenticated sender is offering,
-// passed to ReceiveOptions.OnRequest for an accept/reject decision.
+// passed to ReceiveOptions.OnRequest for an accept/reject decision. SenderKey is
+// the sender's verified Ed25519 identity public key (nil for an anonymous
+// sender); SenderName is its self-declared display label (cosmetic — trust must
+// key off IdentityFingerprint(SenderKey), never the name).
 type RequestInfo struct {
-	PeerIP string
-	Name   string
-	Size   int64
-	IsDir  bool
+	PeerIP     string
+	Name       string
+	Size       int64
+	IsDir      bool
+	SenderKey  []byte
+	SenderName string
 }
 
 // ListenInfo describes a live receiver.
@@ -357,6 +363,27 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		return ReceiveResult{}, false, nil
 	}
 
+	// Optional sender identity: verify the Ed25519 proof is bound to this TLS
+	// session. Present-but-invalid is rejected (an impersonation attempt); absent
+	// leaves the sender anonymous.
+	var senderKey []byte
+	if len(h.IdentityPub) > 0 || len(h.IdentitySig) > 0 {
+		if len(h.IdentityPub) != ed25519.PublicKeySize || len(h.IdentitySig) != ed25519.SignatureSize {
+			sendError(conn, "malformed sender identity")
+			return ReceiveResult{}, false, nil
+		}
+		ekm, err := exportKeyingMaterial(tlsConn)
+		if err != nil {
+			sendError(conn, "channel binding failed")
+			return ReceiveResult{}, false, nil
+		}
+		if !ed25519.Verify(ed25519.PublicKey(h.IdentityPub), identityMessage(ekm), h.IdentitySig) {
+			sendError(conn, "sender identity verification failed")
+			return ReceiveResult{}, false, nil
+		}
+		senderKey = h.IdentityPub
+	}
+
 	// Interactive approval: let the receiver accept or reject this specific
 	// transfer (sender + file already known) before anything lands. A decline is
 	// not an error — the receiver keeps listening.
@@ -364,7 +391,7 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		// Approval may take user time; extend the deadline past the handshake
 		// budget so a considered "accept" isn't killed mid-decision.
 		_ = conn.SetDeadline(time.Now().Add(2 * time.Minute))
-		if !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir}) {
+		if !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir, SenderKey: senderKey, SenderName: h.SenderName}) {
 			_ = writeJSON(conn, msgAccept, accept{OK: false, Reason: "declined by the receiver"})
 			return ReceiveResult{}, false, nil
 		}

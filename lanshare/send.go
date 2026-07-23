@@ -2,6 +2,7 @@ package lanshare
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -30,6 +31,12 @@ type SendOptions struct {
 	HandshakeTimeout time.Duration
 	// OnProgress, if set, is called as bytes are sent.
 	OnProgress func(sent, total int64)
+	// Identity, if set, authenticates the sender: it signs the TLS channel
+	// binding with this Ed25519 key and sends the public key, so the receiver can
+	// recognise / trust this device by its key fingerprint. SenderName is a
+	// display label shown in the receiver's approval prompt / trusted-devices list.
+	Identity   ed25519.PrivateKey
+	SenderName string
 }
 
 // Send streams name/size/body to a receiver at opts.Dest. IsDir marks that body
@@ -61,13 +68,27 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 		return "", fmt.Errorf("lanshare: TLS handshake: %w", err)
 	}
 
-	if err := writeJSON(conn, msgHello, hello{
+	h := hello{
 		Version:     protocolVersion,
 		Name:        name,
 		Size:        size,
 		IsDir:       isDir,
 		HasPassword: opts.Password != "",
-	}); err != nil {
+		SenderName:  opts.SenderName,
+	}
+	// Optional sender identity: sign the TLS channel binding so the receiver can
+	// verify this device holds the key (and recognise it later).
+	if len(opts.Identity) > 0 {
+		ekm, err := exportKeyingMaterial(conn)
+		if err != nil {
+			return "", err
+		}
+		if pub, ok := opts.Identity.Public().(ed25519.PublicKey); ok {
+			h.IdentityPub = pub
+			h.IdentitySig = ed25519.Sign(opts.Identity, identityMessage(ekm))
+		}
+	}
+	if err := writeJSON(conn, msgHello, h); err != nil {
 		return "", err
 	}
 

@@ -3,9 +3,12 @@ package lanshare
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -452,4 +455,96 @@ func TestServeLoopReceivesMultiple(t *testing.T) {
 	}
 	cancel()
 	<-outCh
+}
+
+func TestSenderIdentityRoundTrip(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	var gotKey []byte
+	var gotName string
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir,
+		OnRequest: func(r RequestInfo) bool { gotKey = r.SenderKey; gotName = r.SenderName; return true },
+	})
+	defer cancel()
+
+	if _, err := Send(context.Background(), "id.txt", 2, false, bytes.NewReader([]byte("hi")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Identity: priv, SenderName: "Test-PC"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out := <-outCh; out.err != nil {
+		t.Fatalf("Receive: %v", out.err)
+	}
+	if !bytes.Equal(gotKey, pub) {
+		t.Fatal("receiver did not see the sender's verified public key")
+	}
+	if gotName != "Test-PC" {
+		t.Fatalf("sender name = %q, want Test-PC", gotName)
+	}
+	// Fingerprint is stable + nonempty.
+	if IdentityFingerprint(pub) == "" || IdentityFingerprint(pub) != IdentityFingerprint(pub) {
+		t.Fatal("bad fingerprint")
+	}
+}
+
+func TestForgedSenderIdentityRejected(t *testing.T) {
+	// A sender that presents someone else's pubkey but can't sign for it must be
+	// rejected (the signature won't verify against the claimed key). Craft the
+	// hello directly rather than via Send, which always signs honestly.
+	victimPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	_, attackerPriv, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	info, _, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir,
+		OnRequest: func(RequestInfo) bool { return true },
+	})
+	defer cancel()
+
+	raw, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(info.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := tls.Client(raw, clientTLSConfig(info.Fingerprint))
+	defer conn.Close()
+	if err := conn.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	ekm, err := exportKeyingMaterial(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claim the victim's public key, sign with the attacker's key.
+	sig := ed25519.Sign(attackerPriv, identityMessage(ekm))
+	h := hello{Version: protocolVersion, Name: "forge.txt", Size: 2, IdentityPub: victimPub, IdentitySig: sig}
+	if err := writeJSON(conn, msgHello, h); err != nil {
+		t.Fatal(err)
+	}
+	var acc accept
+	if err := readControl(conn, msgAccept, &acc); err == nil && acc.OK {
+		t.Fatal("forged identity was accepted; expected rejection")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "forge.txt")); statErr == nil {
+		t.Fatal("forged-identity file was written")
+	}
+}
+
+func TestAnonymousSenderStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	var key []byte
+	present := false
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir,
+		OnRequest: func(r RequestInfo) bool { key = r.SenderKey; present = true; return true },
+	})
+	defer cancel()
+	if _, err := Send(context.Background(), "anon.txt", 2, false, bytes.NewReader([]byte("hi")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out := <-outCh; out.err != nil {
+		t.Fatalf("Receive: %v", out.err)
+	}
+	if !present || key != nil {
+		t.Fatal("anonymous sender should reach OnRequest with a nil SenderKey")
+	}
 }
