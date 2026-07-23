@@ -166,6 +166,9 @@ type UploadCreateRequest struct {
 	// (ADR-024, --unrestrict). Pointer so an unset value omits the field and the
 	// server default (false) applies; ignored for public shares.
 	AllowReshare *bool `json:"allow_reshare,omitempty"`
+	// Note is a short message the sharer attaches, shown to viewers on the share
+	// page.
+	Note string `json:"note,omitempty"`
 }
 
 type UploadTarget struct {
