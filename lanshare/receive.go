@@ -309,9 +309,14 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 	// Interactive approval: let the receiver accept or reject this specific
 	// transfer (sender + file already known) before anything lands. A decline is
 	// not an error — the receiver keeps listening.
-	if opts.OnRequest != nil && !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir}) {
-		_ = writeJSON(conn, msgAccept, accept{OK: false, Reason: "declined by the receiver"})
-		return ReceiveResult{}, false, nil
+	if opts.OnRequest != nil {
+		// Approval may take user time; extend the deadline past the handshake
+		// budget so a considered "accept" isn't killed mid-decision.
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Minute))
+		if !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir}) {
+			_ = writeJSON(conn, msgAccept, accept{OK: false, Reason: "declined by the receiver"})
+			return ReceiveResult{}, false, nil
+		}
 	}
 
 	// Resolve + guard the destination path.
@@ -483,10 +488,46 @@ func resolveDestDir(dir string) (string, error) {
 
 // destPath joins a sanitized base name onto the destination dir, refusing names
 // that would escape it.
+// winReservedNames are Windows reserved device basenames (rejected regardless of
+// extension) so a sender-chosen name cannot shadow a device.
+var winReservedNames = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true, "com5": true,
+	"com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true, "lpt5": true,
+	"lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
 func destPath(dir, name string) (string, error) {
 	base := filepath.Base(strings.TrimSpace(name))
 	if base == "" || base == "." || base == ".." || base == string(filepath.Separator) {
 		return "", errors.New("received an invalid file name")
+	}
+	// Reject explicit separators, the NTFS alternate-data-stream marker, control
+	// characters, and bidirectional-override runes (extension-spoofing, e.g. an
+	// RTLO turning a name into a displayed "photoexe.png" while it is ".exe").
+	for _, r := range base {
+		switch {
+		case r == '/' || r == '\\' || r == ':':
+			return "", errors.New("received file name has an illegal character")
+		case r < 0x20 || r == 0x7f:
+			return "", errors.New("received file name has a control character")
+		case r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069'):
+			return "", errors.New("received file name has a text-direction override")
+		}
+	}
+	// Windows silently strips trailing dots/spaces; strip them ourselves so the
+	// on-disk name matches what the user approved, then re-validate.
+	base = strings.TrimRight(base, ". ")
+	if base == "" || base == "." || base == ".." {
+		return "", errors.New("received an invalid file name")
+	}
+	stem := base
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	if winReservedNames[strings.ToLower(stem)] {
+		return "", errors.New("received a reserved file name")
 	}
 	out := filepath.Join(dir, base)
 	if filepath.Dir(out) != filepath.Clean(dir) {

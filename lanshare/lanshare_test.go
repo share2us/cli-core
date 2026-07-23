@@ -371,3 +371,42 @@ func TestBrowseNoReceiversReturnsEmpty(t *testing.T) {
 	// the point is Browse returns cleanly within the timeout without blocking.
 	_ = peers
 }
+
+func TestReceiveRejectsMaliciousFilenames(t *testing.T) {
+	// Hard-rejected: illegal characters, reserved device names, extension spoofing.
+	rejected := []string{
+		"..\\escape.txt",      // backslash separator (illegal char on the receiver)
+		"report.pdf:evil.exe",   // NTFS alternate data stream marker
+		"nul",                   // Windows reserved device name
+		"COM1.txt",              // reserved device name with an extension
+		"photo\u202egnp.exe",   // RTLO extension spoof
+	}
+	for _, name := range rejected {
+		dir := t.TempDir()
+		info, _, cancel := startReceiver(t, ReceiveOptions{Bind: "127.0.0.1", NoPassword: true, DestDir: dir})
+		_, err := Send(context.Background(), name, 1, false, bytes.NewReader([]byte("x")),
+			SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)})
+		cancel()
+		if err == nil {
+			t.Errorf("Send(name=%q) succeeded; expected rejection", name)
+		}
+	}
+
+	// Path traversal in the basename is neutralized (written as the basename
+	// inside the dest dir), not escaping the directory.
+	dir := t.TempDir()
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{Bind: "127.0.0.1", NoPassword: true, DestDir: dir})
+	if _, err := Send(context.Background(), "../escape.txt", 1, false, bytes.NewReader([]byte("x")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err != nil {
+		cancel()
+		t.Fatalf("traversal-basename send failed: %v", err)
+	}
+	<-outCh
+	cancel()
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape.txt")); statErr == nil {
+		t.Error("traversal escaped the destination directory")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "escape.txt")); statErr != nil {
+		t.Error("traversal basename was not written safely inside the dest dir")
+	}
+}
