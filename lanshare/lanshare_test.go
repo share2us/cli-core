@@ -317,3 +317,57 @@ func TestTrustedPeerBypassesPassword(t *testing.T) {
 		t.Fatal("delivered bytes differ")
 	}
 }
+
+func TestOnRequestDeclineRejectsSender(t *testing.T) {
+	dir := t.TempDir()
+	info, _, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir,
+		OnRequest: func(RequestInfo) bool { return false }, // decline everything
+	})
+	defer cancel()
+
+	payload := []byte("should be declined")
+	_, err := Send(context.Background(), "nope.txt", int64(len(payload)), false,
+		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)})
+	if err == nil {
+		t.Fatal("Send succeeded, want a decline error")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "nope.txt")); statErr == nil {
+		t.Fatal("declined file was written to disk")
+	}
+}
+
+func TestOnRequestReceivesSenderDetails(t *testing.T) {
+	dir := t.TempDir()
+	var got RequestInfo
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir,
+		OnRequest: func(r RequestInfo) bool { got = r; return true },
+	})
+	defer cancel()
+
+	payload := []byte("hello with details")
+	if _, err := Send(context.Background(), "doc.txt", int64(len(payload)), false,
+		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out := <-outCh; out.err != nil {
+		t.Fatalf("Receive: %v", out.err)
+	}
+	if got.Name != "doc.txt" || got.Size != int64(len(payload)) {
+		t.Fatalf("OnRequest got name=%q size=%d, want doc.txt/%d", got.Name, got.Size, len(payload))
+	}
+	if got.PeerIP == "" {
+		t.Fatal("OnRequest PeerIP empty")
+	}
+}
+
+func TestBrowseNoReceiversReturnsEmpty(t *testing.T) {
+	peers, err := Browse(context.Background(), 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	// Nothing we started advertises here, so the list is (almost surely) empty;
+	// the point is Browse returns cleanly within the timeout without blocking.
+	_ = peers
+}

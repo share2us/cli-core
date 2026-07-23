@@ -63,6 +63,26 @@ type ReceiveOptions struct {
 	OnListen func(ListenInfo)
 	// OnProgress fires as bytes arrive.
 	OnProgress func(received, total int64)
+	// OnRequest, if set, is consulted after a sender authenticates but before the
+	// transfer is accepted, with the sender IP and declared file name/size.
+	// Returning false declines it (the sender is told; the receiver keeps
+	// listening). This drives an interactive accept/reject prompt for discovered
+	// / open receivers (abuse control for "nearby devices" sharing).
+	OnRequest func(RequestInfo) bool
+	// Loop keeps the receiver running after each completed transfer instead of
+	// returning, so one listener accepts many files (a persistent "serve" mode
+	// for a discoverable device). OnReceived fires per completed transfer.
+	Loop       bool
+	OnReceived func(ReceiveResult)
+}
+
+// RequestInfo describes an inbound transfer an authenticated sender is offering,
+// passed to ReceiveOptions.OnRequest for an accept/reject decision.
+type RequestInfo struct {
+	PeerIP string
+	Name   string
+	Size   int64
+	IsDir  bool
 }
 
 // ListenInfo describes a live receiver.
@@ -167,7 +187,15 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 		}
 		res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
 		if done {
-			return res, herr
+			if !opts.Loop {
+				return res, herr
+			}
+			// Serve mode: a completed transfer (or a per-connection local error
+			// like an overwrite refusal) does not stop the server; report a
+			// success and keep listening until the context is cancelled.
+			if herr == nil && opts.OnReceived != nil {
+				opts.OnReceived(res)
+			}
 		}
 		// Non-fatal (bad peer): keep listening.
 	}
@@ -275,6 +303,14 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		}
 	} else if password != "" && !trustedPeer {
 		sendError(conn, "this receiver requires a password (--password)")
+		return ReceiveResult{}, false, nil
+	}
+
+	// Interactive approval: let the receiver accept or reject this specific
+	// transfer (sender + file already known) before anything lands. A decline is
+	// not an error — the receiver keeps listening.
+	if opts.OnRequest != nil && !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir}) {
+		_ = writeJSON(conn, msgAccept, accept{OK: false, Reason: "declined by the receiver"})
 		return ReceiveResult{}, false, nil
 	}
 
