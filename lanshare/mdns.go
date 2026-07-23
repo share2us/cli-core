@@ -39,6 +39,32 @@ func Advertise(instance string, info ListenInfo) (io.Closer, error) {
 	return closerFunc(func() error { server.Shutdown(); return nil }), nil
 }
 
+// AdvertiseBroadcast announces an offered file (pull) on the local network. It
+// registers under a distinct mDNS instance (so it never collides with a device's
+// receive advert) but carries the clean display name in the "dn" TXT key, plus
+// bc/fn/sz so a browser can show "<device> is broadcasting <file>".
+func AdvertiseBroadcast(displayName string, info ListenInfo, fileName string, fileSize int64) (io.Closer, error) {
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		displayName = "share2us"
+	}
+	instance := displayName + " ·offer" // unique vs the receive instance
+	txt := []string{
+		"v=1",
+		"f=" + info.Fingerprint,
+		"mode=" + ModeOpen,
+		"dn=" + displayName,
+		"bc=1",
+		"fn=" + fileName,
+		"sz=" + strconv.FormatInt(fileSize, 10),
+	}
+	server, err := zeroconf.Register(instance, mdnsService, mdnsDomain, info.Port, txt, nil)
+	if err != nil {
+		return nil, fmt.Errorf("lanshare: mdns register (broadcast): %w", err)
+	}
+	return closerFunc(func() error { server.Shutdown(); return nil }), nil
+}
+
 // Discover browses the local network for a receiver whose instance name matches
 // name (case-insensitive) and returns its address + fingerprint. Password is
 // never carried over mDNS, so PairingInfo.Password is always empty here.
@@ -86,13 +112,18 @@ func Discover(ctx context.Context, name string, timeout time.Duration) (PairingI
 	}
 }
 
-// Peer is a Share2Us receiver discovered advertising on the local network.
+// Peer is a Share2Us endpoint discovered on the local network — either a
+// receiver (can be sent to) or a broadcaster (IsBroadcast: offering FileName for
+// download).
 type Peer struct {
-	Name        string // mDNS instance (device) name
+	Name        string // device display name
 	Host        string // reachable IP
 	Port        int
 	Fingerprint string // cert SHA-256 (for pinning); "" if not advertised
 	Mode        string // ModePassword | ModeAllowIP | ModeOpen
+	IsBroadcast bool   // true when this advert is an offered file (pull)
+	FileName    string // broadcast: offered file name
+	FileSize    int64  // broadcast: offered file size
 }
 
 // Addr returns host:port.
@@ -120,12 +151,23 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 			if host == "" || e.Port == 0 {
 				continue
 			}
+			name := txtValue(e.Text, "dn")
+			if name == "" {
+				name = e.Instance
+			}
+			var fsize int64
+			if s := txtValue(e.Text, "sz"); s != "" {
+				fsize, _ = strconv.ParseInt(s, 10, 64)
+			}
 			seen[e.Instance] = Peer{
-				Name:        e.Instance,
+				Name:        name,
 				Host:        host,
 				Port:        e.Port,
 				Fingerprint: txtValue(e.Text, "f"),
 				Mode:        txtValue(e.Text, "mode"),
+				IsBroadcast: txtValue(e.Text, "bc") == "1",
+				FileName:    txtValue(e.Text, "fn"),
+				FileSize:    fsize,
 			}
 		}
 		close(done)

@@ -100,13 +100,16 @@ type ListenInfo struct {
 	Mode        string // ModePassword | ModeAllowIP | ModeOpen
 }
 
-// ReceiveResult reports a completed transfer.
+// ReceiveResult reports a completed transfer. SenderKey is the peer's verified
+// Ed25519 identity public key (populated on a broadcast Download from the
+// broadcaster's proof; nil otherwise).
 type ReceiveResult struct {
-	Name   string
-	Path   string
-	Bytes  int64
-	SHA256 string
-	PeerIP string
+	Name      string
+	Path      string
+	Bytes     int64
+	SHA256    string
+	PeerIP    string
+	SenderKey []byte
 }
 
 // Receive opens a listener, accepts connections until one completes a full

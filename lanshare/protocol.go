@@ -25,6 +25,7 @@ const (
 	msgEOF    byte = 6 // sender -> receiver: end of stream (zero length)
 	msgDone   byte = 7 // receiver -> sender: completion result
 	msgError  byte = 8 // either way: fatal error, connection closes after
+	msgDownloadReq byte = 9 // downloader -> broadcaster: pull request (broadcast mode)
 
 	// maxControlFrame caps any JSON/handshake control frame. Oversized frames
 	// are rejected before allocation to bound memory on the open port.
@@ -53,10 +54,31 @@ type hello struct {
 	SenderName  string `json:"sender_name,omitempty"`
 }
 
-// accept is the receiver's decision after auth + local checks.
+// accept is the receiver's decision after auth + local checks. In broadcast
+// (pull) mode the broadcaster also returns the file Size so the downloader knows
+// the total up front.
 type accept struct {
 	OK     bool   `json:"ok"`
 	Reason string `json:"reason,omitempty"`
+	Size   int64  `json:"size,omitempty"`
+	// In broadcast (pull) mode the broadcaster proves its own identity here (signed
+	// over the same EKM), so the downloader can recognise / trust the source by key
+	// and show the verify code — even though the advertised cert is ephemeral.
+	IdentityPub []byte `json:"identity_pub,omitempty"`
+	IdentitySig []byte `json:"identity_sig,omitempty"`
+}
+
+// downloadReq is the downloader's opening frame in broadcast (pull) mode: it asks
+// the broadcaster for the advertised file, optionally proving its own identity
+// (so the broadcaster can gate by trust / approval) and requesting a resume
+// Offset (bytes it already has). The identity signature covers the same
+// ("s2u-lan-identity-v1\0" || EKM) message as a sender's, bound to this session.
+type downloadReq struct {
+	Version        int    `json:"version"`
+	Offset         int64  `json:"offset"`
+	IdentityPub    []byte `json:"identity_pub,omitempty"`
+	IdentitySig    []byte `json:"identity_sig,omitempty"`
+	DownloaderName string `json:"downloader_name,omitempty"`
 }
 
 // done is the receiver's completion report.

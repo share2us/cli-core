@@ -548,3 +548,136 @@ func TestAnonymousSenderStillWorks(t *testing.T) {
 		t.Fatal("anonymous sender should reach OnRequest with a nil SenderKey")
 	}
 }
+
+func startBroadcaster(t *testing.T, opts BroadcastOptions) (ListenInfo, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	infoCh := make(chan ListenInfo, 1)
+	user := opts.OnListen
+	opts.OnListen = func(info ListenInfo) {
+		if user != nil {
+			user(info)
+		}
+		infoCh <- info
+	}
+	go func() { _ = Broadcast(ctx, opts) }()
+	select {
+	case info := <-infoCh:
+		return info, cancel
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("broadcaster did not start listening")
+		return ListenInfo{}, cancel
+	}
+}
+
+func TestBroadcastDownloadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "offer.bin")
+	payload := randomBytes(t, 300*1024)
+	if err := os.WriteFile(src, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, cancel := startBroadcaster(t, BroadcastOptions{Bind: "127.0.0.1", Path: src, Access: AccessAll})
+	defer cancel()
+
+	destDir := t.TempDir()
+	res, err := Download(context.Background(), DownloadOptions{
+		Dest: "127.0.0.1:" + strconv.Itoa(info.Port), PinFingerprint: info.Fingerprint,
+		Name: "offer.bin", Size: int64(len(payload)), DestDir: destDir,
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(destDir, "offer.bin"))
+	if !bytes.Equal(got, payload) {
+		t.Fatal("downloaded bytes differ from source")
+	}
+	if res.SHA256 != sha256Hex(payload) {
+		t.Fatal("sha mismatch")
+	}
+}
+
+func TestBroadcastTrustedAccess(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "f.bin")
+	os.WriteFile(src, []byte("secret payload"), 0o600)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	trustedFP := IdentityFingerprint(pub)
+	info, cancel := startBroadcaster(t, BroadcastOptions{
+		Bind: "127.0.0.1", Path: src, Access: AccessTrusted,
+		IsTrusted: func(fp string) bool { return fp == trustedFP },
+	})
+	defer cancel()
+	dest := "127.0.0.1:" + strconv.Itoa(info.Port)
+
+	if _, err := Download(context.Background(), DownloadOptions{Dest: dest, PinFingerprint: info.Fingerprint, Name: "f.bin", Size: 14, DestDir: t.TempDir()}); err == nil {
+		t.Fatal("anonymous downloader was allowed on a trusted-only broadcast")
+	}
+	if _, err := Download(context.Background(), DownloadOptions{Dest: dest, PinFingerprint: info.Fingerprint, Name: "f.bin", Size: 14, DestDir: t.TempDir(), Identity: priv}); err != nil {
+		t.Fatalf("trusted downloader was rejected: %v", err)
+	}
+}
+
+func TestDownloadResume(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "big.bin")
+	payload := randomBytes(t, 500*1024) // ~8 chunks
+	os.WriteFile(src, payload, 0o600)
+	info, cancel := startBroadcaster(t, BroadcastOptions{Bind: "127.0.0.1", Path: src, Access: AccessAll})
+	defer cancel()
+	dest := "127.0.0.1:" + strconv.Itoa(info.Port)
+	destDir := t.TempDir()
+
+	// Interrupt partway through the first attempt.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	_, err := Download(ctx1, DownloadOptions{
+		Dest: dest, PinFingerprint: info.Fingerprint, Name: "big.bin", Size: int64(len(payload)), DestDir: destDir,
+		OnProgress: func(recv, total int64) {
+			if recv > total/2 {
+				cancel1()
+			}
+		},
+	})
+	cancel1()
+	if err == nil {
+		t.Fatal("expected the first download to be interrupted")
+	}
+
+	// Resume — should complete and match.
+	res, err := Download(context.Background(), DownloadOptions{
+		Dest: dest, PinFingerprint: info.Fingerprint, Name: "big.bin", Size: int64(len(payload)), DestDir: destDir,
+	})
+	if err != nil {
+		t.Fatalf("resume download failed: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(destDir, "big.bin"))
+	if !bytes.Equal(got, payload) {
+		t.Fatal("resumed file differs from source")
+	}
+	if res.SHA256 != sha256Hex(payload) {
+		t.Fatal("resumed sha mismatch")
+	}
+}
+
+func TestBroadcastProvesIdentityToDownloader(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "id.bin")
+	os.WriteFile(src, []byte("hello from a known device"), 0o600)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	info, cancel := startBroadcaster(t, BroadcastOptions{Bind: "127.0.0.1", Path: src, Access: AccessAll, Identity: priv})
+	defer cancel()
+	res, err := Download(context.Background(), DownloadOptions{
+		Dest: "127.0.0.1:" + strconv.Itoa(info.Port), PinFingerprint: info.Fingerprint,
+		Name: "id.bin", Size: 25, DestDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if !bytes.Equal(res.SenderKey, pub) {
+		t.Fatal("downloader did not receive the broadcaster's verified identity key")
+	}
+	if IdentityFingerprint(res.SenderKey) == "" {
+		t.Fatal("empty broadcaster fingerprint")
+	}
+}
