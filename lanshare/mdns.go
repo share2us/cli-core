@@ -84,12 +84,7 @@ func Discover(ctx context.Context, name string, timeout time.Duration) (PairingI
 			if !strings.EqualFold(e.Instance, name) {
 				continue
 			}
-			host := ""
-			if len(e.AddrIPv4) > 0 {
-				host = e.AddrIPv4[0].String()
-			} else if len(e.AddrIPv6) > 0 {
-				host = e.AddrIPv6[0].String()
-			}
+			host := bestAddr(e)
 			if host == "" || e.Port == 0 {
 				continue
 			}
@@ -147,7 +142,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 	done := make(chan struct{})
 	go func() {
 		for e := range entries {
-			host := firstAddr(e)
+			host := bestAddr(e)
 			if host == "" || e.Port == 0 {
 				continue
 			}
@@ -186,14 +181,43 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 	return out, nil
 }
 
-func firstAddr(e *zeroconf.ServiceEntry) string {
-	if len(e.AddrIPv4) > 0 {
-		return e.AddrIPv4[0].String()
+// bestAddr picks the most LAN-reachable advertised IPv4. A host on Wi-Fi AND a
+// VPN/Tailscale publishes several addresses, and the mDNS array order is arbitrary,
+// so taking the first one can hand back an address the peer can't route to (e.g. a
+// Tailscale 100.64/10 IP when both machines are actually on the same 192.168.x LAN).
+// Prefer a private RFC1918 LAN address, then a CGNAT/Tailscale overlay, then any
+// other routable address, and never an APIPA link-local. IPv6 is a last resort.
+func bestAddr(e *zeroconf.ServiceEntry) string {
+	best, bestScore := "", -1
+	for _, ip := range e.AddrIPv4 {
+		if s := addrScore(ip); s > bestScore {
+			best, bestScore = ip.String(), s
+		}
+	}
+	if best != "" {
+		return best
 	}
 	if len(e.AddrIPv6) > 0 {
 		return e.AddrIPv6[0].String()
 	}
 	return ""
+}
+
+func addrScore(ip net.IP) int {
+	v4 := ip.To4()
+	if v4 == nil {
+		return -1
+	}
+	switch {
+	case v4[0] == 169 && v4[1] == 254: // APIPA link-local — usually unreachable
+		return 0
+	case v4[0] == 100 && v4[1]&0xC0 == 0x40: // 100.64/10 CGNAT (Tailscale overlay)
+		return 2
+	case v4.IsPrivate(): // 10/8, 172.16/12, 192.168/16 — a real LAN
+		return 3
+	default: // other routable
+		return 1
+	}
 }
 
 func txtValue(text []string, key string) string {
