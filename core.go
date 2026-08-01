@@ -159,8 +159,13 @@ Offline local/LAN direct share (no account, no cloud — all tiers):
   %s [name] --receive [--password PW|--no-password] [--port N] [--allow-ip IP,...] [--path DIR] [--overwrite]
                                                           Receive a direct transfer
   %s <file|dir> --serve [--bind IP] [--port N] [--qr]      Serve a file/directory over HTTP on your LAN
+  %s <file|folder> --broadcast|-b [--access all|trusted|approve] [--once] [--yes]
+                                                          Offer a file for nearby devices to pull
+  %s discover [--download NAME] [--path DIR] [--plain|--json] [--timeout 10s]
+                                                          Find nearby offers (interactive) and pull one
+  %s lan id | trusted | activity | scan-interval           Manage LAN identity, trusted devices, activity
 
-Optional alias:`, command, command, command), 1)
+Optional alias:`, command, command, command, command, command, command), 1)
 	return usage
 }
 
