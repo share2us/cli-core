@@ -16,6 +16,12 @@ func TestContentClassForNameAndTypePreviewTypes(t *testing.T) {
 		{"pdf mime", "report.bin", "application/pdf", "pdf"},
 		{"svg extension stays binary", "icon.svg", "application/octet-stream", "binary"},
 		{"svg mime stays binary", "icon.bin", "image/svg+xml", "binary"},
+		{"log extension (empty mime)", "app.log", "", "log"},
+		{"log extension (octet-stream)", "server.log", "application/octet-stream", "log"},
+		{"log mime", "trace.bin", "text/x-log", "log"},
+		{"csv extension (empty mime)", "data.csv", "", "csv"},
+		{"json extension (empty mime)", "data.json", "", "json"},
+		{"txt extension (empty mime)", "notes.txt", "", "text"},
 	}
 
 	for _, tt := range tests {
