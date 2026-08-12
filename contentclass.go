@@ -41,6 +41,16 @@ func ContentClassForNameAndType(name, contentType string) string {
 		return "text"
 	}
 
+	// Broad text/code/config extension coverage (mirror of the server classifier):
+	// all map to the text class so common source/config files aren't sent as binary.
+	ext := filepath.Ext(normalizedName)
+	if jsonFileExtensions[ext] {
+		return "json"
+	}
+	if textFileExtensions[ext] || textFileBasenames[filepath.Base(normalizedName)] {
+		return "text"
+	}
+
 	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 	if mediaType == "" {
 		mediaType = strings.ToLower(mime.TypeByExtension(filepath.Ext(name)))
@@ -80,6 +90,56 @@ func ContentClassForNameAndType(name, contentType string) string {
 		}
 	}
 	return "binary"
+}
+
+// textFileExtensions are extensions classified as the plain text content class
+// (Free-tier allowed). Keys include the leading dot; bare dotfiles (".gitignore")
+// are keyed by their whole name. Mirror of the server classifier.
+var textFileExtensions = map[string]bool{
+	// programming source
+	".go": true, ".py": true, ".pyw": true, ".pyi": true, ".rb": true, ".php": true, ".phtml": true,
+	".pl": true, ".pm": true, ".lua": true, ".tcl": true, ".js": true, ".mjs": true, ".cjs": true,
+	".jsx": true, ".ts": true, ".tsx": true, ".mts": true, ".cts": true, ".c": true, ".h": true,
+	".cpp": true, ".cxx": true, ".cc": true, ".hpp": true, ".hxx": true, ".hh": true, ".cs": true,
+	".m": true, ".mm": true, ".java": true, ".kt": true, ".kts": true, ".scala": true, ".groovy": true,
+	".swift": true, ".rs": true, ".dart": true, ".r": true, ".jl": true, ".ex": true, ".exs": true,
+	".erl": true, ".hrl": true, ".clj": true, ".cljs": true, ".cljc": true, ".edn": true, ".hs": true,
+	".ml": true, ".mli": true, ".fs": true, ".fsx": true, ".fsi": true, ".vb": true, ".pas": true,
+	".d": true, ".nim": true, ".zig": true, ".v": true, ".sql": true, ".vhd": true, ".vhdl": true,
+	".sv": true, ".asm": true, ".s": true, ".lisp": true, ".el": true, ".scm": true, ".rkt": true,
+	// shell / scripts
+	".sh": true, ".bash": true, ".zsh": true, ".fish": true, ".ksh": true, ".ps1": true, ".psm1": true,
+	".psd1": true, ".bat": true, ".cmd": true, ".awk": true, ".sed": true,
+	// web / markup / style
+	".html": true, ".htm": true, ".xhtml": true, ".css": true, ".scss": true, ".sass": true,
+	".less": true, ".styl": true, ".vue": true, ".svelte": true, ".astro": true, ".xml": true,
+	".xsl": true, ".xslt": true, ".rss": true, ".atom": true,
+	// config / build / infra
+	".toml": true, ".ini": true, ".cfg": true, ".conf": true, ".config": true, ".properties": true,
+	".env": true, ".editorconfig": true, ".lock": true, ".tf": true, ".tfvars": true, ".hcl": true,
+	".proto": true, ".graphql": true, ".gql": true, ".cmake": true, ".mk": true, ".gradle": true,
+	".bazel": true, ".bzl": true, ".dockerfile": true, ".containerfile": true, ".npmrc": true,
+	".nvmrc": true, ".prettierrc": true, ".eslintrc": true, ".babelrc": true,
+	// docs / prose
+	".rst": true, ".adoc": true, ".asciidoc": true, ".tex": true, ".ltx": true, ".org": true,
+	".srt": true, ".vtt": true, ".diff": true, ".patch": true, ".ics": true, ".vcf": true, ".nfo": true,
+	// data (text)
+	".tsv": true, ".plist": true,
+	// dotfiles
+	".gitignore": true, ".gitattributes": true, ".dockerignore": true, ".npmignore": true,
+}
+
+// jsonFileExtensions are JSON-family extensions classified as the json class.
+var jsonFileExtensions = map[string]bool{
+	".jsonl": true, ".ndjson": true, ".json5": true, ".jsonc": true, ".geojson": true,
+}
+
+// textFileBasenames are well-known extensionless text files (matched on the full
+// lowercased base name).
+var textFileBasenames = map[string]bool{
+	"dockerfile": true, "makefile": true, "gnumakefile": true, "rakefile": true, "gemfile": true,
+	"procfile": true, "jenkinsfile": true, "vagrantfile": true, "brewfile": true, "license": true,
+	"readme": true, "changelog": true, "authors": true, "notice": true, "copying": true, "todo": true,
 }
 
 func hasTarStem(name, suffix string) bool {

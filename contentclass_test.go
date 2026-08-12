@@ -22,6 +22,19 @@ func TestContentClassForNameAndTypePreviewTypes(t *testing.T) {
 		{"csv extension (empty mime)", "data.csv", "", "csv"},
 		{"json extension (empty mime)", "data.json", "", "json"},
 		{"txt extension (empty mime)", "notes.txt", "", "text"},
+		{"go source", "main.go", "", "text"},
+		{"python source", "app.py", "application/octet-stream", "text"},
+		{"typescript source", "index.ts", "", "text"},
+		{"shell script", "deploy.sh", "", "text"},
+		{"html markup", "page.html", "", "text"},
+		{"toml config", "config.toml", "", "text"},
+		{"terraform", "main.tf", "", "text"},
+		{"bare dotfile", ".gitignore", "", "text"},
+		{"extensionless Dockerfile", "Dockerfile", "", "text"},
+		{"extensionless Makefile", "Makefile", "", "text"},
+		{"jsonl -> json", "events.jsonl", "", "json"},
+		{"geojson -> json", "shape.geojson", "", "json"},
+		{"unknown binary stays binary", "photo.rawbin", "application/octet-stream", "binary"},
 	}
 
 	for _, tt := range tests {
