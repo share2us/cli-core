@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -379,10 +381,10 @@ func TestReceiveRejectsMaliciousFilenames(t *testing.T) {
 	// Hard-rejected: illegal characters, reserved device names, extension spoofing.
 	rejected := []string{
 		"..\\escape.txt",      // backslash separator (illegal char on the receiver)
-		"report.pdf:evil.exe",   // NTFS alternate data stream marker
-		"nul",                   // Windows reserved device name
-		"COM1.txt",              // reserved device name with an extension
-		"photo\u202egnp.exe",   // RTLO extension spoof
+		"report.pdf:evil.exe", // NTFS alternate data stream marker
+		"nul",                 // Windows reserved device name
+		"COM1.txt",            // reserved device name with an extension
+		"photo\u202egnp.exe",  // RTLO extension spoof
 	}
 	for _, name := range rejected {
 		dir := t.TempDir()
@@ -679,5 +681,206 @@ func TestBroadcastProvesIdentityToDownloader(t *testing.T) {
 	}
 	if IdentityFingerprint(res.SenderKey) == "" {
 		t.Fatal("empty broadcaster fingerprint")
+	}
+}
+
+// --- push-path resume ---
+
+// haltingReader simulates a transfer dying partway through. It must survive the
+// sender's up-front hashing pass intact and fail only once streaming starts,
+// which is why it counts seeks: hashSeekable seeks twice (once to rewind before
+// hashing, once after), so anything from the second seek on is the real send.
+type haltingReader struct {
+	data  []byte
+	pos   int
+	seeks int
+}
+
+func (r *haltingReader) Read(p []byte) (int, error) {
+	if r.seeks >= 2 {
+		// Streaming phase: hand over half the file, then fail. This must be a
+		// non-EOF error, since streamBodyFrom treats io.EOF as a clean finish.
+		half := len(r.data) / 2
+		if r.pos >= half {
+			return 0, errors.New("simulated network failure")
+		}
+		n := copy(p, r.data[r.pos:half])
+		r.pos += n
+		return n, nil
+	}
+	// Hashing phase: read the whole thing and end with a clean EOF, or
+	// hashSeekable fails and the send never reaches the wire at all.
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *haltingReader) Seek(offset int64, whence int) (int64, error) {
+	if whence != io.SeekStart {
+		return 0, errors.New("unsupported whence")
+	}
+	r.pos = int(offset)
+	r.seeks++
+	return offset, nil
+}
+
+func TestPushResumeContinuesFromPartial(t *testing.T) {
+	dir := t.TempDir()
+	body := bytes.Repeat([]byte("abcdefghij"), 4096) // 40 KiB
+	size := int64(len(body))
+
+	// First attempt dies partway through, leaving a partial behind.
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+	})
+	addr := "127.0.0.1:" + strconv.Itoa(info.Port)
+	halting := &haltingReader{data: body}
+	if _, err := Send(context.Background(), "big.bin", size, false, halting,
+		SendOptions{Dest: addr, Resume: true}); err == nil {
+		t.Fatal("first attempt should have failed mid-stream")
+	}
+	cancel()
+	<-outCh
+
+	partials, _ := filepath.Glob(filepath.Join(dir, ".s2u-partial-*"))
+	if len(partials) != 1 {
+		t.Fatalf("expected exactly one partial to survive, got %v", partials)
+	}
+	kept, _ := os.Stat(partials[0])
+	if kept.Size() == 0 || kept.Size() >= size {
+		t.Fatalf("partial size = %d, want a strict prefix of %d", kept.Size(), size)
+	}
+
+	// Second attempt resumes and completes.
+	info2, outCh2, cancel2 := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+	})
+	defer func() { cancel2(); <-outCh2 }()
+	addr2 := "127.0.0.1:" + strconv.Itoa(info2.Port)
+
+	var firstProgress int64 = -1
+	_, err := Send(context.Background(), "big.bin", size, false, bytes.NewReader(body), SendOptions{
+		Dest:   addr2,
+		Resume: true,
+		OnProgress: func(sent, _ int64) {
+			if firstProgress < 0 {
+				firstProgress = sent
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("resumed send failed: %v", err)
+	}
+	if firstProgress <= 0 {
+		t.Fatalf("resume did not skip ahead: first progress report was %d", firstProgress)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("resumed file is corrupt: got %d bytes, want %d", len(got), len(body))
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".s2u-partial-*")); len(left) != 0 {
+		t.Fatalf("partial not cleaned up after success: %v", left)
+	}
+}
+
+func TestPushWithoutResumeLeavesNoPartialAndStillWorks(t *testing.T) {
+	// A sender that does not advertise resume must behave exactly as before: no
+	// resumable partial is created, and an interrupted transfer leaves nothing.
+	dir := t.TempDir()
+	body := bytes.Repeat([]byte("x"), 20000)
+
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+	})
+	addr := "127.0.0.1:" + strconv.Itoa(info.Port)
+	if _, err := Send(context.Background(), "plain.bin", int64(len(body)), false,
+		bytes.NewReader(body), SendOptions{Dest: addr}); err != nil {
+		t.Fatalf("plain send failed: %v", err)
+	}
+	cancel()
+	<-outCh
+
+	got, err := os.ReadFile(filepath.Join(dir, "plain.bin"))
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("plain send did not land correctly: err=%v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".s2u-partial-*")); len(left) != 0 {
+		t.Fatalf("non-resume send left a partial: %v", left)
+	}
+}
+
+func TestPushResumePartialIsKeyedByContent(t *testing.T) {
+	// Two different files sharing a name AND size must not share a partial —
+	// that is what stops a resume splicing one file onto another.
+	a := partialName(strings.Repeat("a", 64), "same.bin", 1024)
+	b := partialName(strings.Repeat("b", 64), "same.bin", 1024)
+	if a == b {
+		t.Fatalf("partials collided across different content digests: %s", a)
+	}
+}
+
+// mutatingReader hashes as one file but streams a different one, standing in for
+// a sender whose bytes do not match the digest it declared.
+type mutatingReader struct {
+	honest []byte
+	lie    []byte
+	pos    int
+	seeks  int
+}
+
+func (r *mutatingReader) body() []byte {
+	if r.seeks >= 2 {
+		return r.lie
+	}
+	return r.honest
+}
+
+func (r *mutatingReader) Read(p []byte) (int, error) {
+	b := r.body()
+	if r.pos >= len(b) {
+		return 0, io.EOF
+	}
+	n := copy(p, b[r.pos:])
+	r.pos += n
+	return n, nil
+}
+
+func (r *mutatingReader) Seek(offset int64, whence int) (int64, error) {
+	r.pos = int(offset)
+	r.seeks++
+	return offset, nil
+}
+
+func TestPushResumeRefusesToPlaceMismatchedContent(t *testing.T) {
+	dir := t.TempDir()
+	honest := bytes.Repeat([]byte("A"), 4096)
+	lie := bytes.Repeat([]byte("B"), 4096)
+
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: dir, Overwrite: true,
+	})
+	defer func() { cancel(); <-outCh }()
+
+	_, err := Send(context.Background(), "evil.bin", int64(len(honest)), false,
+		&mutatingReader{honest: honest, lie: lie},
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Resume: true})
+	if err == nil {
+		t.Fatal("a digest mismatch must fail the transfer")
+	}
+
+	// The receiver must not have written the destination file, and must not have
+	// kept a partial that a later resume would build on.
+	if _, statErr := os.Stat(filepath.Join(dir, "evil.bin")); statErr == nil {
+		t.Fatal("receiver placed a file whose content did not match the declared digest")
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".s2u-partial-*")); len(left) != 0 {
+		t.Fatalf("receiver kept an untrustworthy partial: %v", left)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -181,8 +182,8 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 	}()
 
 	throttle := newIPThrottle(10, 5*time.Second)
-	inflight := newInflightCap(2)      // ≤2 concurrent connections per source IP
-	sem := make(chan struct{}, 8)      // ≤8 concurrent transfers overall (serve mode)
+	inflight := newInflightCap(2) // ≤2 concurrent connections per source IP
+	sem := make(chan struct{}, 8) // ≤8 concurrent transfers overall (serve mode)
 	for {
 		conn, aerr := tlsLn.Accept()
 		if aerr != nil {
@@ -412,13 +413,33 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		return ReceiveResult{}, true, errors.New("lanshare: " + reason)
 	}
 
-	if err := writeJSON(conn, msgAccept, accept{OK: true}); err != nil {
+	// Resume an interrupted push, but ONLY when the sender declared both that it
+	// can resume and the whole-file digest. The digest is what makes this safe:
+	// the partial is named by CONTENT, so a half-received file can never be
+	// spliced onto a different file that merely shares a name and size.
+	partialPath := ""
+	resumeAt := int64(0)
+	if h.SupportsResume && h.SHA256 != "" && !h.IsDir {
+		partialPath = filepath.Join(filepath.Dir(outPath), partialName(h.SHA256, h.Name, h.Size))
+		resumeAt = resumeOffset(partialPath, h.Size)
+	}
+
+	if err := writeJSON(conn, msgAccept, accept{OK: true, ResumeOffset: resumeAt}); err != nil {
 		return ReceiveResult{}, false, nil
 	}
 
 	// Receive the stream into a temp file in the destination dir, then rename.
 	_ = conn.SetDeadline(time.Time{})
-	written, sum, rerr := receiveToFile(ctx, conn, outPath, h.Size, opts.Overwrite, opts.OnProgress)
+	var (
+		written int64
+		sum     string
+		rerr    error
+	)
+	if partialPath != "" {
+		written, sum, rerr = receiveResumableToFile(ctx, conn, partialPath, outPath, resumeAt, h.Size, h.SHA256, opts.Overwrite, opts.OnProgress)
+	} else {
+		written, sum, rerr = receiveToFile(ctx, conn, outPath, h.Size, opts.Overwrite, opts.OnProgress)
+	}
 	if rerr != nil {
 		sendError(conn, "write failed")
 		return ReceiveResult{}, true, rerr
@@ -432,6 +453,119 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		SHA256: sum,
 		PeerIP: peerIP,
 	}, true, nil
+}
+
+// receiveResumableToFile is receiveToFile with a resumable, deterministically
+// named partial file.
+//
+// The partial is KEPT on a mid-transfer failure (that is the whole point) but
+// dropped whenever it cannot be trusted: an over-long stream, a short stream, or
+// a final digest that does not match what the sender declared. Keeping a partial
+// we know to be wrong would poison every later attempt, since the next resume
+// would build on top of it.
+func receiveResumableToFile(ctx context.Context, conn net.Conn, partialPath, outPath string, offset, total int64, wantSHA string, overwrite bool, onProgress func(received, total int64)) (int64, string, error) {
+	digest := sha256.New()
+	var (
+		f   *os.File
+		err error
+	)
+	if offset > 0 {
+		f, err = os.OpenFile(partialPath, os.O_RDWR, 0o600)
+		if err != nil {
+			return 0, "", err
+		}
+		// Re-hash what we already hold so the final digest covers the whole file,
+		// then truncate to exactly the resume point in case of a torn tail.
+		if _, err := io.CopyN(digest, f, offset); err != nil {
+			f.Close()
+			return 0, "", fmt.Errorf("lanshare: re-hash partial: %w", err)
+		}
+		if err := f.Truncate(offset); err != nil {
+			f.Close()
+			return 0, "", err
+		}
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			f.Close()
+			return 0, "", err
+		}
+	} else {
+		f, err = os.OpenFile(partialPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return 0, "", err
+		}
+	}
+	received := offset
+	closed := false
+	drop := func() { // the partial is untrustworthy: do not leave it to be resumed
+		if !closed {
+			_ = f.Close()
+			closed = true
+		}
+		_ = os.Remove(partialPath)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			if !closed {
+				_ = f.Close()
+			}
+			return 0, "", ctx.Err() // keep the partial: this is exactly what resume is for
+		default:
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		typ, payload, ferr := readFrame(conn, maxDataFrame)
+		if ferr != nil {
+			if !closed {
+				_ = f.Close()
+			}
+			return 0, "", fmt.Errorf("lanshare: read stream: %w", ferr)
+		}
+		switch typ {
+		case msgData:
+			received += int64(len(payload))
+			if received > total {
+				drop()
+				return 0, "", fmt.Errorf("lanshare: sender exceeded declared size (%d > %d bytes)", received, total)
+			}
+			if _, werr := f.Write(payload); werr != nil {
+				if !closed {
+					_ = f.Close()
+				}
+				return 0, "", werr
+			}
+			_, _ = digest.Write(payload)
+			if onProgress != nil {
+				onProgress(received, total)
+			}
+		case msgEOF:
+			if received != total {
+				drop()
+				return 0, "", fmt.Errorf("lanshare: incomplete transfer: got %d of %d bytes", received, total)
+			}
+			sum := hex.EncodeToString(digest.Sum(nil))
+			if wantSHA != "" && sum != wantSHA {
+				// Refuse to PLACE a file we know is wrong. Without this the
+				// receiver would write corruption to the destination and only the
+				// sender would notice, after the fact.
+				drop()
+				return 0, "", errors.New("lanshare: integrity check failed (sha256 mismatch)")
+			}
+			if err := f.Sync(); err != nil {
+				return 0, "", err
+			}
+			if err := f.Close(); err != nil {
+				return 0, "", err
+			}
+			closed = true
+			if err := placeFile(partialPath, outPath, overwrite); err != nil {
+				return 0, "", err
+			}
+			return received, sum, nil
+		default:
+			drop()
+			return 0, "", fmt.Errorf("lanshare: unexpected frame type %d during transfer", typ)
+		}
+	}
 }
 
 // receiveToFile reads msgData frames until msgEOF, hashing, writing atomically.

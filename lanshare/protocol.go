@@ -17,14 +17,14 @@ import (
 const (
 	protocolVersion = 1
 
-	msgHello  byte = 1 // sender -> receiver: transfer intent + auth mode
-	msgPake   byte = 2 // both ways: raw PAKE handshake bytes
-	msgConfirm byte = 3 // both ways: PAKE key-confirmation MAC (EKM-bound)
-	msgAccept byte = 4 // receiver -> sender: accept/reject decision
-	msgData   byte = 5 // sender -> receiver: a file chunk
-	msgEOF    byte = 6 // sender -> receiver: end of stream (zero length)
-	msgDone   byte = 7 // receiver -> sender: completion result
-	msgError  byte = 8 // either way: fatal error, connection closes after
+	msgHello       byte = 1 // sender -> receiver: transfer intent + auth mode
+	msgPake        byte = 2 // both ways: raw PAKE handshake bytes
+	msgConfirm     byte = 3 // both ways: PAKE key-confirmation MAC (EKM-bound)
+	msgAccept      byte = 4 // receiver -> sender: accept/reject decision
+	msgData        byte = 5 // sender -> receiver: a file chunk
+	msgEOF         byte = 6 // sender -> receiver: end of stream (zero length)
+	msgDone        byte = 7 // receiver -> sender: completion result
+	msgError       byte = 8 // either way: fatal error, connection closes after
 	msgDownloadReq byte = 9 // downloader -> broadcaster: pull request (broadcast mode)
 
 	// maxControlFrame caps any JSON/handshake control frame. Oversized frames
@@ -52,6 +52,17 @@ type hello struct {
 	IdentityPub []byte `json:"identity_pub,omitempty"`
 	IdentitySig []byte `json:"identity_sig,omitempty"`
 	SenderName  string `json:"sender_name,omitempty"`
+	// Resume support (both omitempty, so old peers are unaffected — the version
+	// check is a strict equality, so this could NOT be signalled with a version
+	// bump without breaking every cross-version transfer).
+	//
+	// SupportsResume says the sender can start mid-file if asked. SHA256 is the
+	// whole-file digest, known up front. The receiver offers a resume ONLY when
+	// BOTH are present: the digest is what makes the partial safe to reuse,
+	// because it names the partial by CONTENT, so two different files that happen
+	// to share a name and size can never be spliced together.
+	SupportsResume bool   `json:"supports_resume,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
 }
 
 // accept is the receiver's decision after auth + local checks. In broadcast
@@ -66,6 +77,10 @@ type accept struct {
 	// and show the verify code — even though the advertised cert is ephemeral.
 	IdentityPub []byte `json:"identity_pub,omitempty"`
 	IdentitySig []byte `json:"identity_sig,omitempty"`
+	// ResumeOffset asks the sender to start at this byte instead of 0. Only ever
+	// set when the sender advertised SupportsResume; an older sender ignores the
+	// unknown field and streams from the start, which the receiver handles.
+	ResumeOffset int64 `json:"resume_offset,omitempty"`
 }
 
 // downloadReq is the downloader's opening frame in broadcast (pull) mode: it asks

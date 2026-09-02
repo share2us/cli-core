@@ -37,6 +37,16 @@ type SendOptions struct {
 	// display label shown in the receiver's approval prompt / trusted-devices list.
 	Identity   ed25519.PrivateKey
 	SenderName string
+	// Resume enables restarting an interrupted push mid-file. It costs an extra
+	// read pass over the source to compute the whole-file digest BEFORE any bytes
+	// go out (the receiver needs the digest to know a partial belongs to this
+	// exact file), so it is opt-in rather than the default — otherwise every send
+	// of a large file would stall on a hash it usually does not need.
+	//
+	// Ignored unless body is an io.ReadSeeker and isDir is false: a directory is
+	// streamed as an archive built on the fly, which is neither seekable nor
+	// hashable up front.
+	Resume bool
 }
 
 // Send streams name/size/body to a receiver at opts.Dest. IsDir marks that body
@@ -75,6 +85,16 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 		IsDir:       isDir,
 		HasPassword: opts.Password != "",
 		SenderName:  opts.SenderName,
+	}
+	seeker, seekable := body.(io.ReadSeeker)
+	resumable := opts.Resume && seekable && !isDir
+	if resumable {
+		sum, herr := hashSeekable(seeker)
+		if herr != nil {
+			return "", herr
+		}
+		h.SupportsResume = true
+		h.SHA256 = sum
 	}
 	// Optional sender identity: sign the TLS channel binding so the receiver can
 	// verify this device holds the key (and recognise it later).
@@ -117,7 +137,27 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 	// Transfer: clear the handshake deadline, apply a rolling idle deadline.
 	_ = conn.SetDeadline(time.Time{})
 	digest := sha256.New()
-	if err := streamBody(ctx, conn, body, size, digest, opts.OnProgress); err != nil {
+	sent := int64(0)
+	if resumable && acc.ResumeOffset > 0 {
+		if acc.ResumeOffset > size {
+			return "", fmt.Errorf("lanshare: receiver asked to resume at %d, past the file end (%d)", acc.ResumeOffset, size)
+		}
+		// The receiver already holds these bytes and has re-hashed them, so feed
+		// them to our digest without resending, then stream the remainder.
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return "", err
+		}
+		if _, err := io.CopyN(digest, seeker, acc.ResumeOffset); err != nil {
+			return "", fmt.Errorf("lanshare: re-hash for resume: %w", err)
+		}
+		sent = acc.ResumeOffset
+	} else if resumable {
+		// Hashing rewound the reader; put it back before streaming.
+		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+			return "", err
+		}
+	}
+	if err := streamBodyFrom(ctx, conn, body, sent, size, digest, opts.OnProgress); err != nil {
 		return "", err
 	}
 
@@ -139,10 +179,31 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 	return localSum, nil
 }
 
+// hashSeekable digests the whole reader and rewinds it, so the caller can still
+// stream from the start afterwards.
+func hashSeekable(rs io.ReadSeeker) (string, error) {
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	if _, err := io.Copy(digest, rs); err != nil {
+		return "", fmt.Errorf("lanshare: hash source: %w", err)
+	}
+	if _, err := rs.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
 // streamBody writes body as msgData frames, hashing as it goes, then msgEOF.
 func streamBody(ctx context.Context, conn *tls.Conn, body io.Reader, total int64, digest hash.Hash, onProgress func(sent, total int64)) error {
+	return streamBodyFrom(ctx, conn, body, 0, total, digest, onProgress)
+}
+
+// streamBodyFrom is streamBody starting from an already-transferred byte count,
+// so progress and the declared total stay meaningful across a resume.
+func streamBodyFrom(ctx context.Context, conn *tls.Conn, body io.Reader, sent, total int64, digest hash.Hash, onProgress func(sent, total int64)) error {
 	buf := make([]byte, chunkBytes)
-	var sent int64
 	for {
 		select {
 		case <-ctx.Done():
