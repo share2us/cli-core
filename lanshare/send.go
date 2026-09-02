@@ -43,9 +43,11 @@ type SendOptions struct {
 	// exact file), so it is opt-in rather than the default — otherwise every send
 	// of a large file would stall on a hash it usually does not need.
 	//
-	// Ignored unless body is an io.ReadSeeker and isDir is false: a directory is
-	// streamed as an archive built on the fly, which is neither seekable nor
-	// hashable up front.
+	// Ignored unless body is an io.ReadSeeker, and ignored for directories. A
+	// directory is sent as an archive that is rebuilt on each attempt and is not
+	// guaranteed byte-identical between them (entry order and timestamps), so its
+	// digest would usually differ and the partial would not match anyway — even
+	// when the caller happens to stage that archive to a seekable file first.
 	Resume bool
 }
 
