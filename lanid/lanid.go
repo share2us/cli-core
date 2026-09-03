@@ -12,9 +12,11 @@ package lanid
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/share2us/cli-core/lanshare"
@@ -90,12 +92,49 @@ func Code() string { return lanshare.VerifyCode(Fingerprint()) }
 // ---- trusted-devices store --------------------------------------------------
 
 // TrustedDevice is a device we've trusted, keyed by its verified Ed25519 key
-// fingerprint. Trusted = auto-accept (its transfers land without a prompt);
-// untrusted devices always prompt. Revocable.
+// fingerprint. Trust skips the verify-code compare and the anti-spam caps; what
+// happens next depends on Mode: ModeAsk (the default) still asks the receiver to
+// approve each transfer, ModeAuto lets its transfers land without a prompt.
+// Untrusted devices always go through the full prompt. Revocable.
 type TrustedDevice struct {
 	Fingerprint string `json:"fingerprint"`
 	Name        string `json:"name"`
+	// Mode is ModeAsk or ModeAuto. Empty (records written before modes existed)
+	// means ModeAsk: the safer reading, never fewer prompts than the user expects.
+	Mode string `json:"mode,omitempty"`
 }
+
+// Trust modes.
+const (
+	// ModeAsk: trusted, but every transfer still needs a one-tap approval (no
+	// verify code, no anti-spam caps). The default.
+	ModeAsk = "ask"
+	// ModeAuto: trusted and its transfers are saved without asking.
+	ModeAuto = "auto"
+)
+
+// NormalizeMode maps user input to a mode constant ("" -> ModeAsk).
+func NormalizeMode(v string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", ModeAsk:
+		return ModeAsk, nil
+	case ModeAuto:
+		return ModeAuto, nil
+	default:
+		return "", fmt.Errorf("unknown trust mode %q (ask or auto)", v)
+	}
+}
+
+// EffectiveMode returns the device's mode with the legacy empty value read as ask.
+func (d TrustedDevice) EffectiveMode() string {
+	if d.Mode == ModeAuto {
+		return ModeAuto
+	}
+	return ModeAsk
+}
+
+// AutoAccept reports whether transfers from this device may land without asking.
+func (d TrustedDevice) AutoAccept() bool { return d.EffectiveMode() == ModeAuto }
 
 type trustStore struct {
 	mu   sync.Mutex
@@ -162,8 +201,22 @@ func Lookup(fingerprint string) (TrustedDevice, bool) {
 	return d, ok
 }
 
-// Trust adds/updates a trusted device (trusted = auto-accept, revocable).
+// Trust adds/updates a trusted device in the default ModeAsk (revocable). An
+// existing record keeps its mode; use TrustWithMode or SetMode to change it.
 func Trust(fingerprint, name string) error {
+	return trust(fingerprint, name, "", false)
+}
+
+// TrustWithMode adds/updates a trusted device with an explicit mode.
+func TrustWithMode(fingerprint, name, mode string) error {
+	m, err := NormalizeMode(mode)
+	if err != nil {
+		return err
+	}
+	return trust(fingerprint, name, m, true)
+}
+
+func trust(fingerprint, name, mode string, setMode bool) error {
 	if fingerprint == "" {
 		return nil
 	}
@@ -172,9 +225,45 @@ func Trust(fingerprint, name string) error {
 		return err
 	}
 	s.mu.Lock()
-	s.m[fingerprint] = TrustedDevice{Fingerprint: fingerprint, Name: name}
+	d := TrustedDevice{Fingerprint: fingerprint, Name: name}
+	if prev, ok := s.m[fingerprint]; ok && !setMode {
+		d.Mode = prev.Mode
+	}
+	if setMode {
+		d.Mode = mode
+	}
+	if d.Mode == ModeAsk {
+		d.Mode = "" // ask is the default; keep the file minimal
+	}
+	s.m[fingerprint] = d
 	s.saveLocked()
 	s.mu.Unlock()
+	return nil
+}
+
+// SetMode changes the mode of an already-trusted device.
+func SetMode(fingerprint, mode string) error {
+	m, err := NormalizeMode(mode)
+	if err != nil {
+		return err
+	}
+	s, err := store()
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.m[fingerprint]
+	if !ok {
+		return fmt.Errorf("device %s is not trusted", fingerprint)
+	}
+	if m == ModeAsk {
+		d.Mode = ""
+	} else {
+		d.Mode = m
+	}
+	s.m[fingerprint] = d
+	s.saveLocked()
 	return nil
 }
 
