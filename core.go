@@ -51,7 +51,7 @@ Usage:
   %s whoami
   %s logout
   %s signout <device-id|device-name>
-  %s update [--host URL] [--version VERSION]
+  %s update [--host URL] [--version VERSION] [--channel stable|beta]
   %s install-agent-tools [--agent codex|claude-code|gemini-cli]
   %s tui
   %s mcp serve

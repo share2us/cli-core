@@ -361,11 +361,15 @@ type UsageResponse struct {
 }
 
 type UpdateCheckResponse struct {
-	CurrentVersion  string          `json:"current_version"`
-	LatestVersion   string          `json:"latest_version"`
-	UpdateAvailable bool            `json:"update_available"`
-	Platform        string          `json:"platform"`
-	Downloads       UpdateDownloads `json:"downloads"`
+	CurrentVersion  string `json:"current_version"`
+	LatestVersion   string `json:"latest_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	Platform        string `json:"platform"`
+	// Channel is the channel the server answered for ("stable" or "beta");
+	// Prerelease is true when the offered build is a beta (prerelease).
+	Channel    string          `json:"channel,omitempty"`
+	Prerelease bool            `json:"prerelease,omitempty"`
+	Downloads  UpdateDownloads `json:"downloads"`
 }
 
 type UpdateDownloads struct {
@@ -785,11 +789,23 @@ func (c *Client) Usage(ctx context.Context) (UsageResponse, error) {
 	return out, err
 }
 
+// CheckUpdate checks the stable channel. See CheckUpdateChannel.
 func (c *Client) CheckUpdate(ctx context.Context, version, osName, arch string) (UpdateCheckResponse, error) {
+	return c.CheckUpdateChannel(ctx, version, osName, arch, UpdateChannelStable)
+}
+
+// CheckUpdateChannel asks the server for the newest build on a release
+// channel ("stable" or "beta"; "" means stable).
+func (c *Client) CheckUpdateChannel(ctx context.Context, version, osName, arch, channel string) (UpdateCheckResponse, error) {
 	query := url.Values{}
 	query.Set("version", version)
 	query.Set("os", osName)
 	query.Set("arch", arch)
+	if ch, err := NormalizeUpdateChannel(channel); err != nil {
+		return UpdateCheckResponse{}, err
+	} else if ch != UpdateChannelStable {
+		query.Set("channel", ch)
+	}
 	var out UpdateCheckResponse
 	err := c.doJSON(ctx, http.MethodGet, "/v1/cli/update?"+query.Encode(), nil, &out)
 	return out, err

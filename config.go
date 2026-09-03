@@ -39,6 +39,43 @@ type Config struct {
 	// TrustedPeers are alias names or IPs whose inbound offline transfers are
 	// auto-accepted without a password (security trade-off; set with a warning).
 	TrustedPeers []string `json:"trusted_peers,omitempty"`
+	// UpdateChannel is the self-update channel this install follows: "" or
+	// "stable" (default) or "beta". Set with `update --channel`; the
+	// SHARE2US_UPDATE_CHANNEL env var overrides it for one run.
+	UpdateChannel string `json:"update_channel,omitempty"`
+}
+
+const (
+	UpdateChannelStable = "stable"
+	UpdateChannelBeta   = "beta"
+	UpdateChannelEnv    = "SHARE2US_UPDATE_CHANNEL"
+)
+
+// NormalizeUpdateChannel canonicalises a channel name ("" means stable).
+func NormalizeUpdateChannel(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", UpdateChannelStable:
+		return UpdateChannelStable, nil
+	case UpdateChannelBeta:
+		return UpdateChannelBeta, nil
+	default:
+		return "", fmt.Errorf("unknown update channel %q (stable or beta)", value)
+	}
+}
+
+// ResolveUpdateChannel picks the channel for an update check: the env var
+// wins, then the saved config, then stable. An unparseable value falls back
+// to stable rather than failing a passive check.
+func ResolveUpdateChannel(config Config) string {
+	if v := os.Getenv(UpdateChannelEnv); strings.TrimSpace(v) != "" {
+		if ch, err := NormalizeUpdateChannel(v); err == nil {
+			return ch
+		}
+	}
+	if ch, err := NormalizeUpdateChannel(config.UpdateChannel); err == nil {
+		return ch
+	}
+	return UpdateChannelStable
 }
 
 // UploadDefaults holds tri-state standing defaults for upload options. A nil
