@@ -92,3 +92,45 @@ func TestScanIntervalAndActivity(t *testing.T) {
 		t.Fatal("activity not cleared")
 	}
 }
+
+func TestTrustModesDefaultToAsk(t *testing.T) {
+	fp := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	t.Cleanup(func() { _ = Untrust(fp) })
+
+	if err := Trust(fp, "laptop"); err != nil {
+		t.Fatal(err)
+	}
+	d, ok := Lookup(fp)
+	if !ok || d.EffectiveMode() != ModeAsk || d.AutoAccept() || d.Mode != "" {
+		t.Fatalf("default trust should be ask (stored empty): %+v ok=%v", d, ok)
+	}
+	if err := SetMode(fp, "AUTO"); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ = Lookup(fp); !d.AutoAccept() || d.Mode != ModeAuto {
+		t.Fatalf("after SetMode auto: %+v", d)
+	}
+	// Re-trusting without a mode keeps the existing one.
+	if err := Trust(fp, "laptop renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ = Lookup(fp); !d.AutoAccept() || d.Name != "laptop renamed" {
+		t.Fatalf("Trust must keep the mode: %+v", d)
+	}
+	if err := TrustWithMode(fp, "laptop", "ask"); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ = Lookup(fp); d.AutoAccept() {
+		t.Fatalf("TrustWithMode ask should clear auto: %+v", d)
+	}
+	if err := SetMode(fp, "sometimes"); err == nil {
+		t.Fatal("unknown mode must be rejected")
+	}
+	if err := SetMode("0000", ModeAuto); err == nil {
+		t.Fatal("SetMode on an untrusted device must fail")
+	}
+	// Legacy record without a mode reads as ask.
+	if (TrustedDevice{Fingerprint: fp}).AutoAccept() {
+		t.Fatal("legacy record must not auto-accept")
+	}
+}
