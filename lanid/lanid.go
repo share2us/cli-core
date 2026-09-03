@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/share2us/cli-core/lanshare"
 )
@@ -136,162 +137,43 @@ func (d TrustedDevice) EffectiveMode() string {
 // AutoAccept reports whether transfers from this device may land without asking.
 func (d TrustedDevice) AutoAccept() bool { return d.EffectiveMode() == ModeAuto }
 
-type trustStore struct {
-	mu   sync.Mutex
-	path string
-	m    map[string]TrustedDevice
-}
-
-var (
-	tsOnce sync.Once
-	ts     *trustStore
-	tsErr  error
-)
-
-func store() (*trustStore, error) {
-	tsOnce.Do(func() {
-		dir, err := configDir()
-		if err != nil {
-			tsErr = err
-			return
-		}
-		s := &trustStore{path: filepath.Join(dir, "lan_trusted.json"), m: map[string]TrustedDevice{}}
-		if data, rerr := os.ReadFile(s.path); rerr == nil {
-			var list []TrustedDevice
-			if json.Unmarshal(data, &list) == nil {
-				for _, d := range list {
-					if d.Fingerprint != "" {
-						s.m[d.Fingerprint] = d
-					}
-				}
-			}
-		}
-		ts = s
-	})
-	return ts, tsErr
-}
-
-// saveLocked writes the store atomically (caller holds s.mu).
-func (s *trustStore) saveLocked() {
-	list := make([]TrustedDevice, 0, len(s.m))
-	for _, d := range s.m {
-		list = append(list, d)
-	}
-	if data, err := json.MarshalIndent(list, "", "  "); err == nil {
-		tmp := s.path + ".tmp"
-		if os.WriteFile(tmp, data, 0o600) == nil {
-			_ = os.Rename(tmp, s.path)
-		}
-	}
-}
-
-// Lookup returns the trusted device for a fingerprint (ok=false if untrusted or
-// the fingerprint is empty/anonymous).
+// Lookup returns the trusted device for a fingerprint from the VERIFIED server-
+// signed cache (ok=false if untrusted, anonymous, or no valid cache).
 func Lookup(fingerprint string) (TrustedDevice, bool) {
 	if fingerprint == "" {
 		return TrustedDevice{}, false
 	}
-	s, err := store()
-	if err != nil {
-		return TrustedDevice{}, false
+	for _, d := range cachedDevices(time.Now()) {
+		if d.Fingerprint == fingerprint {
+			return d, true
+		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	d, ok := s.m[fingerprint]
-	return d, ok
+	return TrustedDevice{}, false
 }
 
-// Trust adds/updates a trusted device in the default ModeAsk (revocable). An
-// existing record keeps its mode; use TrustWithMode or SetMode to change it.
-func Trust(fingerprint, name string) error {
-	return trust(fingerprint, name, "", false)
-}
-
-// TrustWithMode adds/updates a trusted device with an explicit mode.
-func TrustWithMode(fingerprint, name, mode string) error {
-	m, err := NormalizeMode(mode)
-	if err != nil {
-		return err
-	}
-	return trust(fingerprint, name, m, true)
-}
-
-func trust(fingerprint, name, mode string, setMode bool) error {
-	if fingerprint == "" {
-		return nil
-	}
-	s, err := store()
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	d := TrustedDevice{Fingerprint: fingerprint, Name: name}
-	if prev, ok := s.m[fingerprint]; ok && !setMode {
-		d.Mode = prev.Mode
-	}
-	if setMode {
-		d.Mode = mode
-	}
-	if d.Mode == ModeAsk {
-		d.Mode = "" // ask is the default; keep the file minimal
-	}
-	s.m[fingerprint] = d
-	s.saveLocked()
-	s.mu.Unlock()
-	return nil
-}
-
-// SetMode changes the mode of an already-trusted device.
-func SetMode(fingerprint, mode string) error {
-	m, err := NormalizeMode(mode)
-	if err != nil {
-		return err
-	}
-	s, err := store()
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	d, ok := s.m[fingerprint]
-	if !ok {
-		return fmt.Errorf("device %s is not trusted", fingerprint)
-	}
-	if m == ModeAsk {
-		d.Mode = ""
-	} else {
-		d.Mode = m
-	}
-	s.m[fingerprint] = d
-	s.saveLocked()
-	return nil
-}
-
-// Untrust removes a device from the trust store (revoke).
-func Untrust(fingerprint string) error {
-	s, err := store()
-	if err != nil {
-		return err
-	}
-	s.mu.Lock()
-	delete(s.m, fingerprint)
-	s.saveLocked()
-	s.mu.Unlock()
-	return nil
-}
-
-// List returns the trusted devices, sorted by name.
+// List returns the trusted devices from the verified cache, sorted by name.
 func List() []TrustedDevice {
-	s, err := store()
-	if err != nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	list := make([]TrustedDevice, 0, len(s.m))
-	for _, d := range s.m {
-		list = append(list, d)
-	}
+	list := cachedDevices(time.Now())
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return list
+}
+
+// Trust, TrustWithMode, SetMode and Untrust were the local writers of the
+// pre-ADR-034 trust file. Trust is now granted, changed and revoked through the
+// account API (with MFA for anything that widens it); these remain only so old
+// callers fail loudly instead of silently writing a file nobody reads.
+func Trust(string, string) error                 { return ErrLocalTrustDisabled }
+func TrustWithMode(string, string, string) error { return ErrLocalTrustDisabled }
+func SetMode(string, string) error               { return ErrLocalTrustDisabled }
+func Untrust(string) error                       { return ErrLocalTrustDisabled }
+
+// RemoveLegacyTrustFile deletes the pre-ADR-034 local trust file if present. Its
+// entries were never verified by a second factor, so they are not migrated; the
+// user re-trusts each device with MFA. Best-effort.
+func RemoveLegacyTrustFile() {
+	dir, err := configDir()
+	if err != nil {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, "lan_trusted.json"))
 }

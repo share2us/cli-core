@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/share2us/cli-core/lanid"
 	"io"
 	"net"
 	"net/http"
@@ -1126,4 +1127,77 @@ func SleepInterval(interval int) time.Duration {
 		interval = 5
 	}
 	return time.Duration(interval) * time.Second
+}
+
+// ---- LAN device trust (ADR-034) --------------------------------------------
+
+// LanTrustChallenge is the server's answer to a trust request: which factor it
+// chose and where the code went. Nothing is trusted until LanTrustVerify.
+type LanTrustChallenge struct {
+	ChallengeID string `json:"challenge_id"`
+	Factor      string `json:"factor"`            // "email" | "totp"
+	SentTo      string `json:"sent_to,omitempty"` // masked email (email factor)
+	ExpiresIn   int    `json:"expires_in"`
+	VerifyCode  string `json:"verify_code"` // the device's 6-digit code, for the human to compare
+}
+
+// LanTrustedDevice is one trusted device as the server reports it.
+type LanTrustedDevice struct {
+	Fingerprint string `json:"fingerprint"`
+	Name        string `json:"name"`
+	Mode        string `json:"mode"`
+	ApprovedVia string `json:"approved_via"`
+}
+
+// LanTrustList is the account's trusted devices plus the signed copy to cache.
+type LanTrustList struct {
+	Devices   []LanTrustedDevice    `json:"devices"`
+	Signed    lanid.SignedTrustList `json:"signed"`
+	PublicKey string                `json:"public_key"`
+}
+
+// LanTrustOpen opens a trust challenge for a device fingerprint (mode ask|auto).
+// The server delivers the second factor (email OTP, or TOTP when enrolled).
+func (c *Client) LanTrustOpen(ctx context.Context, fingerprint, name, mode string) (LanTrustChallenge, error) {
+	var out LanTrustChallenge
+	err := c.doJSON(ctx, http.MethodPost, "/v1/lan/trust/challenges", map[string]string{
+		"fingerprint": fingerprint, "name": name, "mode": mode,
+	}, &out)
+	return out, err
+}
+
+// LanTrustVerify submits the code; on success the device is trusted and the
+// signed list is returned. A wrong code is an *APIError with Code "invalid_code"
+// (retry) or "too_many_attempts" / "challenge_not_found" (start over).
+func (c *Client) LanTrustVerify(ctx context.Context, challengeID, code string) (LanTrustList, error) {
+	var out LanTrustList
+	err := c.doJSON(ctx, http.MethodPost, "/v1/lan/trust/challenges/"+challengeID+"/verify", map[string]string{"code": code}, &out)
+	return out, err
+}
+
+// LanTrusted fetches the account's trusted devices and the signed list.
+func (c *Client) LanTrusted(ctx context.Context) (LanTrustList, error) {
+	var out LanTrustList
+	err := c.doJSON(ctx, http.MethodGet, "/v1/lan/trusted", nil, &out)
+	return out, err
+}
+
+// LanTrustSetMode downgrades a device to "ask". Upgrading to "auto" must go
+// through LanTrustOpen/LanTrustVerify (the server answers 409 mfa_required here).
+func (c *Client) LanTrustSetMode(ctx context.Context, fingerprint, mode string) (LanTrustList, error) {
+	var out LanTrustList
+	err := c.doJSON(ctx, http.MethodPatch, "/v1/lan/trusted/"+fingerprint, map[string]string{"mode": mode}, &out)
+	return out, err
+}
+
+// LanTrustRevoke removes a device from the account's trusted list.
+func (c *Client) LanTrustRevoke(ctx context.Context, fingerprint string) (LanTrustList, error) {
+	var out LanTrustList
+	err := c.doJSON(ctx, http.MethodDelete, "/v1/lan/trusted/"+fingerprint, nil, &out)
+	return out, err
+}
+
+// SaveTrustList verifies and caches a fetched list so lanid.Lookup can use it.
+func SaveTrustList(list LanTrustList) error {
+	return lanid.SaveSignedTrust(list.Signed, list.PublicKey)
 }
