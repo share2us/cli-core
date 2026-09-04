@@ -90,6 +90,10 @@ func Fingerprint() string {
 // Code is the short human-verifiable code for this device's fingerprint.
 func Code() string { return lanshare.VerifyCode(Fingerprint()) }
 
+// SafetyNumber is this device's long comparison number (lanshare.SafetyNumber),
+// shown at trust time next to the 6-digit Code.
+func SafetyNumber() string { return lanshare.SafetyNumber(Fingerprint()) }
+
 // ---- trusted-devices store --------------------------------------------------
 
 // TrustedDevice is a device we've trusted, keyed by its verified Ed25519 key
