@@ -43,6 +43,9 @@ type Config struct {
 	// "stable" (default) or "beta". Set with `update --channel`; the
 	// SHARE2US_UPDATE_CHANNEL env var overrides it for one run.
 	UpdateChannel string `json:"update_channel,omitempty"`
+	// Daemon holds the optional background service settings (ADR-035). nil means
+	// all defaults; the service is off until installed regardless.
+	Daemon *DaemonConfig `json:"daemon,omitempty"`
 }
 
 const (
