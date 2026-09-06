@@ -1,8 +1,11 @@
 package clicore
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 )
@@ -137,4 +140,62 @@ func (c *Client) AgentAllow(ctx context.Context, senderDeviceID string) error {
 func (c *Client) AgentReportResult(ctx context.Context, id, status, result string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/result",
 		map[string]string{"status": status, "result": result}, nil)
+}
+
+// AgentUploadContent uploads a ciphertext blob (an encrypted file for an inject)
+// and returns its object key, to pass as AgentInjectInput.ObjectKey.
+func (c *Client) AgentUploadContent(ctx context.Context, ciphertext []byte) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/v1/agent/upload", bytes.NewReader(ciphertext))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := readLimitedBody(resp)
+		if apiErr := decodeAPIErrorFromBody(resp, body); apiErr.Code != "" {
+			return "", apiErr
+		}
+		return "", &APIError{Status: resp.StatusCode, Code: "upload_failed", Message: fmt.Sprintf("agent upload failed: HTTP %d", resp.StatusCode)}
+	}
+	var out struct {
+		ObjectKey string `json:"object_key"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSONResponse)).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.ObjectKey, nil
+}
+
+// AgentDownloadContent streams the ciphertext for a delivered inject request to
+// dst (target side); decrypt it with the content key opened from SealedFileKey.
+func (c *Client) AgentDownloadContent(ctx context.Context, id string, dst io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/v1/agent/inject/"+url.PathEscape(id)+"/content", nil)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := readLimitedBody(resp)
+		if apiErr := decodeAPIErrorFromBody(resp, body); apiErr.Code != "" {
+			return apiErr
+		}
+		return &APIError{Status: resp.StatusCode, Code: "download_failed", Message: fmt.Sprintf("agent content failed: HTTP %d", resp.StatusCode)}
+	}
+	_, err = io.Copy(dst, resp.Body)
+	return err
 }

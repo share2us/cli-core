@@ -424,3 +424,12 @@ func OpenSealedForDevice(sealed, publicKey, privateKey string) ([]byte, error) {
 	}
 	return opened, nil
 }
+
+// NewContentKey returns a fresh 32-byte AES-256 content key for EncryptStream.
+func NewContentKey() ([]byte, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
