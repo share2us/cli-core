@@ -13,14 +13,15 @@ import (
 
 // AgentSessionInfo is a session in the reachable directory.
 type AgentSessionInfo struct {
-	SessionID  string `json:"session_id"`
-	Tool       string `json:"tool"`
-	Name       string `json:"name"`
-	Project    string `json:"project"`
-	Status     string `json:"status"`
-	DeviceID   string `json:"device_id"`
-	DeviceName string `json:"device_name"`
-	LastSeen   string `json:"last_seen"`
+	SessionID       string `json:"session_id"`
+	Tool            string `json:"tool"`
+	Name            string `json:"name"`
+	Project         string `json:"project"`
+	Status          string `json:"status"`
+	DeviceID        string `json:"device_id"`
+	DeviceName      string `json:"device_name"`
+	DevicePublicKey string `json:"device_public_key"`
+	LastSeen        string `json:"last_seen"`
 }
 
 // AgentRegisterInput registers/heartbeats one live session.
