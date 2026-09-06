@@ -5,21 +5,39 @@ package daemonctl
 import (
 	"errors"
 	"net"
+	"os"
 	"syscall"
 	"time"
+
+	clicore "github.com/share2us/cli-core"
 )
 
-// listenSocket binds a unix-domain stream socket. Binding is the single-instance
-// lock (a second bind fails with EADDRINUSE).
-func listenSocket(path string) (net.Listener, error) {
-	return net.Listen("unix", path)
+// controlEndpoint is the per-user unix socket path.
+func controlEndpoint() (string, error) {
+	return clicore.DaemonSocketPath()
 }
 
-func dialSocket(path string, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("unix", path, timeout)
+// bindControl binds the unix socket (the single-instance lock). If the bind
+// fails because the socket file already exists, it connects to it: a successful
+// connect means a live daemon owns it (ErrAlreadyRunning); a refused connect
+// means a stale socket from a crash, which is removed and rebound. release
+// removes the socket file on Close.
+func bindControl(sock string) (net.Listener, func(), error) {
+	ln, err := net.Listen("unix", sock)
+	if err != nil && errors.Is(err, syscall.EADDRINUSE) {
+		if c, derr := net.DialTimeout("unix", sock, dialTimeout); derr == nil {
+			_ = c.Close()
+			return nil, nil, ErrAlreadyRunning
+		}
+		_ = os.Remove(sock)
+		ln, err = net.Listen("unix", sock)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return ln, func() { _ = os.Remove(sock) }, nil
 }
 
-// isAddrInUse distinguishes a live daemon from a stale socket file to clear.
-func isAddrInUse(err error) bool {
-	return errors.Is(err, syscall.EADDRINUSE)
+func dialControl(sock string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout("unix", sock, timeout)
 }
