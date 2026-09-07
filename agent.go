@@ -63,9 +63,11 @@ type AgentRequest struct {
 	TargetSessionID string `json:"target_session_id"`
 	Tool            string `json:"tool"`
 	SealedPrompt    string `json:"sealed_prompt"`
-	ObjectKey       string `json:"object_key"`
-	SealedFileKey   string `json:"sealed_file_key"`
-	CreatedAt       string `json:"created_at"`
+	// HasFile reports whether a file rides with this request. The storage key is
+	// deliberately NOT exposed — download by request id with AgentDownloadContent.
+	HasFile       bool   `json:"has_file"`
+	SealedFileKey string `json:"sealed_file_key"`
+	CreatedAt     string `json:"created_at"`
 }
 
 // AgentInjectState is a sender's view of a request's progress.
