@@ -46,4 +46,13 @@ building and green.
 
 ## License
 
-[MIT](LICENSE.md) © Share2Us
+[GNU General Public License v3.0 only](LICENSE) © 2026 Hassan Khurram
+
+Share2Us clients are free software: you may use, study, share and modify them.
+If you distribute a modified version — or a program that links this library —
+you must pass on the same freedoms and make the corresponding source available
+under the GPL.
+
+Releases published before 2026-09-07 remain under the MIT licence they were
+issued with; a licence already granted cannot be withdrawn. The change applies
+to this and later versions.

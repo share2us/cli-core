@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Hassan Khurram
+
 // Package lanid manages this device's persistent LAN identity (an Ed25519
 // keypair) and the trusted-devices store, shared by the `s2u` CLI and the
 // desktop GUI. Both store under os.UserConfigDir()/share2us (the same base
