@@ -81,7 +81,7 @@ func LoadOrCreateToken() (string, error) {
 // ErrAlreadyRunning. A stale socket left by a crashed daemon (nobody answering a
 // ping) is removed and rebound.
 func Listen(handler func(Request) Response) (io.Closer, error) {
-	sock, err := clicore.DaemonSocketPath()
+	endpoint, err := controlEndpoint()
 	if err != nil {
 		return nil, err
 	}
@@ -89,20 +89,14 @@ func Listen(handler func(Request) Response) (io.Closer, error) {
 	if err != nil {
 		return nil, err
 	}
-	ln, err := listenSocket(sock)
+	// bindControl is the single-instance lock: it returns ErrAlreadyRunning when
+	// another live daemon already holds this user's control endpoint, and clears a
+	// stale one left by a crash. release frees the lock on Close.
+	ln, release, err := bindControl(endpoint)
 	if err != nil {
-		if isAddrInUse(err) {
-			if _, perr := dial(sock, tok, Request{Op: "ping"}); perr == nil {
-				return nil, ErrAlreadyRunning
-			}
-			_ = os.Remove(sock)
-			ln, err = listenSocket(sock)
-		}
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
-	srv := &controlServer{ln: ln, token: tok, handler: handler, sock: sock}
+	srv := &controlServer{ln: ln, token: tok, handler: handler, release: release}
 	go srv.serve()
 	return srv, nil
 }
@@ -111,7 +105,7 @@ type controlServer struct {
 	ln      net.Listener
 	token   string
 	handler func(Request) Response
-	sock    string
+	release func()
 }
 
 func (s *controlServer) serve() {
@@ -146,7 +140,9 @@ func (s *controlServer) handle(conn net.Conn) {
 
 func (s *controlServer) Close() error {
 	err := s.ln.Close()
-	_ = os.Remove(s.sock)
+	if s.release != nil {
+		s.release()
+	}
 	return err
 }
 
@@ -156,9 +152,9 @@ func writeResp(w io.Writer, r Response) {
 }
 
 // dial sends one authenticated request and returns the response.
-func dial(sock, token string, req Request) (Response, error) {
+func dial(endpoint, token string, req Request) (Response, error) {
 	req.Token = token
-	conn, err := dialSocket(sock, dialTimeout)
+	conn, err := dialControl(endpoint, dialTimeout)
 	if err != nil {
 		return Response{}, err
 	}
@@ -183,7 +179,7 @@ func dial(sock, token string, req Request) (Response, error) {
 // It returns (Response, true) when a daemon answered, or (_, false) when none is
 // reachable. Used by `daemon status`/`stop` and the GUI handoff probe.
 func Query(op string) (Response, bool) {
-	sock, err := clicore.DaemonSocketPath()
+	endpoint, err := controlEndpoint()
 	if err != nil {
 		return Response{}, false
 	}
@@ -191,7 +187,7 @@ func Query(op string) (Response, bool) {
 	if err != nil {
 		return Response{}, false
 	}
-	resp, err := dial(sock, tok, Request{Op: op})
+	resp, err := dial(endpoint, tok, Request{Op: op})
 	if err != nil {
 		return Response{}, false
 	}
