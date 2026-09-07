@@ -199,3 +199,30 @@ func (c *Client) AgentDownloadContent(ctx context.Context, id string, dst io.Wri
 	_, err = io.Copy(dst, resp.Body)
 	return err
 }
+
+// AgentGrant is a standing allow held by this device.
+type AgentGrant struct {
+	SenderDeviceID string `json:"sender_device_id"`
+	ApprovedAt     string `json:"approved_at"`
+}
+
+// AgentApproveOnce approves a single pending request WITHOUT granting the sender
+// standing access (target side).
+func (c *Client) AgentApproveOnce(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/approve", nil, nil)
+}
+
+// AgentRevoke withdraws a sender device's standing access to this device.
+func (c *Client) AgentRevoke(ctx context.Context, senderDeviceID string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/agent/revoke", map[string]string{"sender_device_id": senderDeviceID}, nil)
+}
+
+// AgentAllowed lists the sender devices this device currently grants standing
+// access to.
+func (c *Client) AgentAllowed(ctx context.Context) ([]AgentGrant, error) {
+	var out struct {
+		Grants []AgentGrant `json:"grants"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/allowed", nil, &out)
+	return out.Grants, err
+}
