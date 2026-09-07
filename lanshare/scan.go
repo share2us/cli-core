@@ -52,6 +52,10 @@ type ScanOptions struct {
 	// IncludeTailscale asks the tailscale CLI for peers (default true). Peers are
 	// enumerated, never scanned: the tailnet range is millions of addresses.
 	IncludeTailscale *bool
+	// SkipLocalSubnets probes only tailnet peers and leaves the local segment
+	// alone. This is the polite default for a background discovery: enumerating a
+	// handful of known peers is nothing like sweeping every address on a subnet.
+	SkipLocalSubnets bool
 }
 
 // ScannedPeer is a host that answered a probe as a Share2Us receiver.
@@ -83,8 +87,10 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 	targets := opts.Targets
 	tailnet := map[netip.Addr]bool{}
 	if len(targets) == 0 {
-		ifaceAddrs, _ := net.InterfaceAddrs()
-		targets = localScanTargets(ifaceAddrs)
+		if !opts.SkipLocalSubnets {
+			ifaceAddrs, _ := net.InterfaceAddrs()
+			targets = localScanTargets(ifaceAddrs)
+		}
 		if opts.IncludeTailscale == nil || *opts.IncludeTailscale {
 			for _, a := range tailscalePeers(ctx) {
 				if !tailnet[a] {
