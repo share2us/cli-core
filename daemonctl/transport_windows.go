@@ -59,6 +59,20 @@ func bindControl(pipe string) (net.Listener, func(), error) {
 	ln, err := winio.ListenPipe(pipe, &winio.PipeConfig{})
 	if err != nil {
 		windows.CloseHandle(h)
+		// The mutex above lives in the per-session Local\ namespace, but the pipe
+		// name is machine-global. A daemon started by the logon-triggered
+		// scheduled task therefore sits in a DIFFERENT session from, say, a shell
+		// on the same box, so the mutex does not collide and we land here instead
+		// — historically with a bare "Access is denied", which reads like a
+		// permissions problem rather than "it is already running" (observed on
+		// Windows 10 19045, 2026-09-07). Global\ is not the answer: creating a
+		// Global object needs SeCreateGlobalPrivilege, which a normal user lacks.
+		// The pipe name already encodes the user, so if we can DIAL it, the owner
+		// is another instance of ours and this is exactly ErrAlreadyRunning.
+		if c, derr := dialControl(pipe, time.Second); derr == nil {
+			c.Close()
+			return nil, nil, ErrAlreadyRunning
+		}
 		return nil, nil, err
 	}
 	return ln, func() { windows.CloseHandle(h) }, nil
