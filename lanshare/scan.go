@@ -123,6 +123,12 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 			if !ok {
 				return
 			}
+			// Same rule as Browse: a device is never one of its own results.
+			// A scan skips this machine's own addresses, but a second Share2Us
+			// process here would still answer a probe.
+			if isSelfFingerprint(fp) {
+				return
+			}
 			mu.Lock()
 			found = append(found, ScannedPeer{
 				Host: a.String(), Port: opts.Port, Fingerprint: fp, ViaTailscale: tailnet[a],
