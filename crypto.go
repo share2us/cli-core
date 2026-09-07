@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Hassan Khurram
+
 package clicore
 
 import (
@@ -379,4 +382,57 @@ func nonceFor(base []byte, counter uint64) []byte {
 	nonce := append([]byte(nil), base...)
 	binary.BigEndian.PutUint64(nonce[len(nonce)-8:], counter)
 	return nonce
+}
+
+// SealForDevice anonymously seals arbitrary bytes (e.g. an injected prompt) to a
+// target device's public key, so only that device can open it (ADR-036 E2E). The
+// server relays the ciphertext and cannot read it. Unlike SealContentKeyForDevice
+// this places no length constraint on the payload.
+func SealForDevice(plaintext []byte, targetPublicKey string) (string, error) {
+	publicKey, err := decodeDeviceKey(targetPublicKey)
+	if err != nil {
+		return "", err
+	}
+	var public [32]byte
+	copy(public[:], publicKey)
+	sealed, err := box.SealAnonymous(nil, plaintext, &public, rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	return encodeDeviceKey(sealed), nil
+}
+
+// OpenSealedForDevice opens a payload sealed with SealForDevice using the
+// device's own keypair.
+func OpenSealedForDevice(sealed, publicKey, privateKey string) ([]byte, error) {
+	env, err := decodeFlexibleBase64(sealed)
+	if err != nil {
+		return nil, err
+	}
+	publicRaw, err := decodeDeviceKey(publicKey)
+	if err != nil {
+		return nil, err
+	}
+	privateRaw, err := decodeDeviceKey(privateKey)
+	if err != nil {
+		return nil, err
+	}
+	var public [32]byte
+	var private [32]byte
+	copy(public[:], publicRaw)
+	copy(private[:], privateRaw)
+	opened, ok := box.OpenAnonymous(nil, env, &public, &private)
+	if !ok {
+		return nil, errors.New("open sealed payload: authentication failed")
+	}
+	return opened, nil
+}
+
+// NewContentKey returns a fresh 32-byte AES-256 content key for EncryptStream.
+func NewContentKey() ([]byte, error) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
 }

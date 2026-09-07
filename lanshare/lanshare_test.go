@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Hassan Khurram
+
 package lanshare
 
 import (
@@ -300,17 +303,22 @@ func TestTransferViaPairingString(t *testing.T) {
 	}
 }
 
-func TestTrustedPeerBypassesPassword(t *testing.T) {
+// A device the receiver has trusted (ADR-034, by VERIFIED identity key) may send
+// without the receiver's password.
+func TestTrustedSenderBypassesPassword(t *testing.T) {
 	dir := t.TempDir()
-	// Receiver has a password (for everyone) BUT trusts 127.0.0.1.
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	info, outCh, cancel := startReceiver(t, ReceiveOptions{
-		Bind: "127.0.0.1", Password: "everyone-needs-this", TrustedIPs: []string{"127.0.0.1"}, DestDir: dir,
+		Bind: "127.0.0.1", Password: "everyone-needs-this", DestDir: dir,
+		IsTrustedSender: func(key []byte) bool { return bytes.Equal(key, pub) },
 	})
 	defer cancel()
-	// Sender from the trusted IP sends with NO password and is accepted.
 	payload := []byte("trusted, no password needed")
 	if _, err := Send(context.Background(), "trusted.txt", int64(len(payload)), false,
-		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err != nil {
+		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Identity: priv}); err != nil {
 		t.Fatalf("trusted Send: %v", err)
 	}
 	out := <-outCh
@@ -320,6 +328,53 @@ func TestTrustedPeerBypassesPassword(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(dir, "trusted.txt"))
 	if !bytes.Equal(got, payload) {
 		t.Fatal("delivered bytes differ")
+	}
+}
+
+// W-M5 regression. The password bypass used to be granted on the strength of the
+// SOURCE IP, so anyone who could take a trusted address on the LAN dropped the
+// receiver from a PAKE to no authentication at all. Both senders below come from
+// the same (loopback) address; only the trusted KEY may skip the password.
+func TestUntrustedSenderCannotBypassPassword(t *testing.T) {
+	dir := t.TempDir()
+	trustedPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, attackerPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", Password: "everyone-needs-this", DestDir: dir,
+		// Only the other device is trusted, and the address is not consulted.
+		IsTrustedSender: func(key []byte) bool { return bytes.Equal(key, trustedPub) },
+	})
+	defer cancel()
+	payload := []byte("should never land")
+	_, err = Send(context.Background(), "attacker.txt", int64(len(payload)), false,
+		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Identity: attackerPriv})
+	if err == nil {
+		t.Fatal("an untrusted sender from a loopback address bypassed the password")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "attacker.txt")); statErr == nil {
+		t.Fatal("untrusted transfer landed on disk")
+	}
+}
+
+// An anonymous sender (no identity at all) can never be trusted, so the password
+// still applies.
+func TestAnonymousSenderCannotBypassPassword(t *testing.T) {
+	dir := t.TempDir()
+	info, _, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", Password: "everyone-needs-this", DestDir: dir,
+		IsTrustedSender: func([]byte) bool { return true }, // even so: no key, no trust
+	})
+	defer cancel()
+	payload := []byte("should never land")
+	if _, err := Send(context.Background(), "anon.txt", int64(len(payload)), false,
+		bytes.NewReader(payload), SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port)}); err == nil {
+		t.Fatal("an anonymous sender bypassed the password")
 	}
 }
 
