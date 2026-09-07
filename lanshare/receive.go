@@ -52,9 +52,16 @@ type ReceiveOptions struct {
 	// AllowIPs restricts accepted source IPs. With AllowIPs and no password, the
 	// mode is allow-ip (network-identity auth).
 	AllowIPs []string
-	// TrustedIPs are source IPs whose inbound transfers are auto-accepted even
-	// when a password is set for everyone else (trust-by-IP; caller warns).
-	TrustedIPs []string
+	// IsTrustedSender reports whether a VERIFIED sender identity key belongs to a
+	// device the receiver has already trusted (ADR-034: the server-signed trust
+	// list). A trusted sender may transfer without the receiver's password.
+	//
+	// This replaces the former TrustedIPs, which granted the same password bypass
+	// on the strength of a source IP — an address an attacker on the same LAN can
+	// take, which downgraded the receiver's authentication from a PAKE to "who
+	// currently answers to that IP". The identity key is proven against this TLS
+	// session's channel binding, so it cannot be taken that way.
+	IsTrustedSender func(senderKey []byte) bool
 	// DestDir is where files land (default ~/s2u, created if missing).
 	DestDir string
 	// Overwrite permits replacing an existing destination file.
@@ -148,11 +155,6 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 	if err != nil {
 		return ReceiveResult{}, err
 	}
-	trusted, err := parseAllowIPs(opts.TrustedIPs)
-	if err != nil {
-		return ReceiveResult{}, err
-	}
-
 	cert, fingerprint, err := generateEphemeralCert()
 	if err != nil {
 		return ReceiveResult{}, err
@@ -202,7 +204,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 		}
 		if !opts.Loop {
 			// One-shot receive: serial; the first completed transfer returns.
-			res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
+			res, done, herr := handleConn(ctx, conn, opts, password, allow)
 			inflight.release(ip)
 			if done {
 				return res, herr
@@ -214,7 +216,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 		sem <- struct{}{}
 		go func(conn net.Conn, ip string) {
 			defer func() { inflight.release(ip); <-sem }()
-			res, done, herr := handleConn(ctx, conn, opts, password, allow, trusted)
+			res, done, herr := handleConn(ctx, conn, opts, password, allow)
 			if done && herr == nil && opts.OnReceived != nil {
 				opts.OnReceived(res)
 			}
@@ -308,7 +310,7 @@ func (t *ipThrottle) allow(ip string) bool {
 // connection produced a terminal result (success, or a hard local error like an
 // overwrite refusal) and Receive should return; done=false means the peer was
 // rejected and the listener should keep waiting.
-func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, password string, allow, trusted []net.IP) (ReceiveResult, bool, error) {
+func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, password string, allow []net.IP) (ReceiveResult, bool, error) {
 	closeConn := true
 	defer func() {
 		if closeConn {
@@ -320,7 +322,6 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 	if len(allow) > 0 && !ipAllowed(peerIP, allow) {
 		return ReceiveResult{}, false, nil // silently drop disallowed sources
 	}
-	trustedPeer := len(trusted) > 0 && ipAllowed(peerIP, trusted)
 
 	_ = conn.SetDeadline(time.Now().Add(opts.HandshakeTimeout))
 	tlsConn, ok := conn.(*tls.Conn)
@@ -344,29 +345,6 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		return ReceiveResult{}, false, nil
 	}
 
-	// Authenticate. The PAKE runs iff the SENDER offered a password (keeps both
-	// sides in lockstep). Authorization: a password sender must pass the PAKE; a
-	// no-password sender is accepted only when the receiver has no password OR the
-	// peer IP is trusted.
-	if h.HasPassword {
-		if password == "" {
-			sendError(conn, "this receiver is not expecting a password")
-			return ReceiveResult{}, false, nil
-		}
-		ekm, err := exportKeyingMaterial(tlsConn)
-		if err != nil {
-			sendError(conn, "channel binding failed")
-			return ReceiveResult{}, false, nil
-		}
-		if err := pakeReceiver(conn, ekm, []byte(password)); err != nil {
-			sendError(conn, "authentication failed")
-			return ReceiveResult{}, false, nil // wrong password: keep waiting
-		}
-	} else if password != "" && !trustedPeer {
-		sendError(conn, "this receiver requires a password (--password)")
-		return ReceiveResult{}, false, nil
-	}
-
 	// Optional sender identity: verify the Ed25519 proof is bound to this TLS
 	// session. Present-but-invalid is rejected (an impersonation attempt); absent
 	// leaves the sender anonymous.
@@ -386,6 +364,33 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 			return ReceiveResult{}, false, nil
 		}
 		senderKey = h.IdentityPub
+	}
+
+	// Whether this sender is a device the receiver has already trusted. Checked
+	// only against the key just VERIFIED above — never the peer address.
+	trustedSender := senderKey != nil && opts.IsTrustedSender != nil && opts.IsTrustedSender(senderKey)
+
+	// Authenticate. The PAKE runs iff the SENDER offered a password (keeps both
+	// sides in lockstep). Authorization: a password sender must pass the PAKE; a
+	// no-password sender is accepted only when the receiver has no password OR the
+	// sender proved a trusted identity.
+	if h.HasPassword {
+		if password == "" {
+			sendError(conn, "this receiver is not expecting a password")
+			return ReceiveResult{}, false, nil
+		}
+		ekm, err := exportKeyingMaterial(tlsConn)
+		if err != nil {
+			sendError(conn, "channel binding failed")
+			return ReceiveResult{}, false, nil
+		}
+		if err := pakeReceiver(conn, ekm, []byte(password)); err != nil {
+			sendError(conn, "authentication failed")
+			return ReceiveResult{}, false, nil // wrong password: keep waiting
+		}
+	} else if password != "" && !trustedSender {
+		sendError(conn, "this receiver requires a password (--password)")
+		return ReceiveResult{}, false, nil
 	}
 
 	// Interactive approval: let the receiver accept or reject this specific
