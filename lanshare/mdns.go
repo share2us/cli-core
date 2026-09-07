@@ -39,7 +39,8 @@ func Advertise(instance string, info ListenInfo) (io.Closer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lanshare: mdns register: %w", err)
 	}
-	return closerFunc(func() error { server.Shutdown(); return nil }), nil
+	release := registerSelf(info.Fingerprint) // so Browse never returns this device to itself
+	return closerFunc(func() error { server.Shutdown(); release(); return nil }), nil
 }
 
 // AdvertiseBroadcast announces an offered file (pull) on the local network. It
@@ -65,7 +66,8 @@ func AdvertiseBroadcast(displayName string, info ListenInfo, fileName string, fi
 	if err != nil {
 		return nil, fmt.Errorf("lanshare: mdns register (broadcast): %w", err)
 	}
-	return closerFunc(func() error { server.Shutdown(); return nil }), nil
+	release := registerSelf(info.Fingerprint)
+	return closerFunc(func() error { server.Shutdown(); release(); return nil }), nil
 }
 
 // Discover browses the local network for a receiver whose instance name matches
@@ -142,11 +144,18 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 	defer cancel()
 
 	seen := make(map[string]Peer)
+	local := localIPs()
 	done := make(chan struct{})
 	go func() {
 		for e := range entries {
 			host := bestAddr(e)
 			if host == "" || e.Port == 0 {
+				continue
+			}
+			fp := txtValue(e.Text, "f")
+			// Never list this device to itself. mDNS echoes our own advert back to
+			// us, which put a loop-back "send to" target in the user's list.
+			if isSelfFingerprint(fp) || isSelfHost(host, local) {
 				continue
 			}
 			name := txtValue(e.Text, "dn")
@@ -157,11 +166,22 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 			if s := txtValue(e.Text, "sz"); s != "" {
 				fsize, _ = strconv.ParseInt(s, 10, 64)
 			}
-			seen[e.Instance] = Peer{
+			// Key on identity, not instance name, so one device reachable on two
+			// interfaces (LAN and Tailscale, say) is listed once. Broadcast offers
+			// are keyed separately: a device can be both a receiver and an offer,
+			// and collapsing those would hide the file it is sharing.
+			key := e.Instance
+			if fp != "" {
+				key = fp
+				if txtValue(e.Text, "bc") == "1" {
+					key = "bc:" + fp
+				}
+			}
+			seen[key] = Peer{
 				Name:        name,
 				Host:        host,
 				Port:        e.Port,
-				Fingerprint: txtValue(e.Text, "f"),
+				Fingerprint: fp,
 				Mode:        txtValue(e.Text, "mode"),
 				IsBroadcast: txtValue(e.Text, "bc") == "1",
 				FileName:    txtValue(e.Text, "fn"),
