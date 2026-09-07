@@ -24,7 +24,7 @@ func TestAgentClientRoundTrips(t *testing.T) {
 		case r.Method == "POST" && r.URL.Path == "/v1/agent/inject":
 			_, _ = w.Write([]byte(`{"id":"req-1","status":"pending","target_status":"idle","busy":false}`))
 		case r.URL.Path == "/v1/agent/requests":
-			_, _ = w.Write([]byte(`{"requests":[{"id":"req-1","tool":"claude","sealed_prompt":"BLOB","target_session_id":"s1"}]}`))
+			_, _ = w.Write([]byte(`{"requests":[{"id":"req-1","tool":"claude","sealed_prompt":"BLOB","target_session_id":"s1","has_file":false}]}`))
 		default:
 			_, _ = w.Write([]byte(`{}`))
 		}
