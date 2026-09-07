@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/netip"
 	"os/exec"
+
+	"github.com/share2us/cli-core/internal/proc"
 	"sort"
 	"strconv"
 	"sync"
@@ -218,9 +220,16 @@ func localScanTargets(ifaceAddrs []net.Addr) []netip.Addr {
 // scanned: the tailnet is a /10 and walking it is not an option. This is also
 // the only discovery that crosses subnets, which mDNS structurally cannot do.
 func tailscalePeers(ctx context.Context) []netip.Addr {
+	// Look first: on a machine without Tailscale this avoids starting a process
+	// at all, which matters because a desktop app calls this on a timer.
+	if _, err := exec.LookPath("tailscale"); err != nil {
+		return nil
+	}
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, "tailscale", "status", "--json").Output()
+	cmd := exec.CommandContext(cctx, "tailscale", "status", "--json")
+	proc.Hide(cmd) // a GUI app has no console; without this Windows flashes one
+	out, err := cmd.Output()
 	if err != nil {
 		return nil // not installed, or not up: nothing to add
 	}

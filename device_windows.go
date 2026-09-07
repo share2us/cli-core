@@ -5,12 +5,12 @@ package clicore
 
 import (
 	"errors"
-	"os/exec"
+	"github.com/share2us/cli-core/internal/proc"
 	"strings"
 )
 
 func stableMachineID() (string, error) {
-	out, err := exec.Command("reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid").Output()
+	out, err := proc.Hidden("reg", "query", `HKLM\SOFTWARE\Microsoft\Cryptography`, "/v", "MachineGuid").Output()
 	if err != nil {
 		return "", err
 	}
