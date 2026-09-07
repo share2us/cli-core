@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Hassan Khurram
+
 // Package p2p implements the Share2Us peer-to-peer streaming transport
 // (Phase 3): a single ordered/reliable WebRTC data channel between two peers,
 // with SDP/ICE signaling brokered by a lightweight relay WebSocket.

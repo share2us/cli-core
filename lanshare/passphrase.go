@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 Hassan Khurram
+
 // Package lanshare implements Share2Us's offline, account-free, direct
 // peer-to-peer file transfer over a LAN / Tailscale / WireGuard / any reachable
 // IP. It never touches the Share2Us cloud, relay, or TURN — this is the "actual
