@@ -21,9 +21,9 @@ import (
 
 // Access modes for a broadcast (who may pull the offered file).
 const (
-	AccessAll      = "all"      // anyone nearby can download
-	AccessTrusted  = "trusted"  // only devices IsTrusted reports true for
-	AccessApprove  = "approve"  // the broadcaster approves each download (OnRequest)
+	AccessAll     = "all"     // anyone nearby can download
+	AccessTrusted = "trusted" // only devices IsTrusted reports true for
+	AccessApprove = "approve" // the broadcaster approves each download (OnRequest)
 )
 
 // BroadcastOptions configures serving one file for download ("pull"). The
@@ -56,13 +56,13 @@ type BroadcastOptions struct {
 
 // ConnEvent is a broadcast connection lifecycle/progress update.
 type ConnEvent struct {
-	PeerIP    string
-	PeerKey   []byte // verified downloader identity ("" if anonymous)
-	PeerName  string
-	Sent      int64
-	Total     int64
-	Done      bool   // transfer completed
-	Err       string // non-empty if the connection failed
+	PeerIP   string
+	PeerKey  []byte // verified downloader identity ("" if anonymous)
+	PeerName string
+	Sent     int64
+	Total    int64
+	Done     bool   // transfer completed
+	Err      string // non-empty if the connection failed
 }
 
 // Broadcast opens a listener, advertises the file, and serves it to downloaders
@@ -91,7 +91,7 @@ func Broadcast(ctx context.Context, opts BroadcastOptions) error {
 		return err
 	}
 
-	cert, fingerprint, err := generateEphemeralCert()
+	cert, fingerprint, err := generateEphemeralCert(opts.Identity, opts.Instance)
 	if err != nil {
 		return err
 	}
@@ -240,17 +240,17 @@ func handleDownload(ctx context.Context, conn net.Conn, opts BroadcastOptions, s
 // downloader (needed for trusted/approve broadcasts). Interrupted downloads
 // resume automatically from a kept partial keyed by (PinFingerprint|Name|Size).
 type DownloadOptions struct {
-	Dest           string
-	PinFingerprint string
-	Name           string
-	Size           int64
-	DestDir        string
-	Identity       ed25519.PrivateKey
-	DownloaderName string
-	Overwrite      bool
-	DialTimeout    time.Duration
+	Dest             string
+	PinFingerprint   string
+	Name             string
+	Size             int64
+	DestDir          string
+	Identity         ed25519.PrivateKey
+	DownloaderName   string
+	Overwrite        bool
+	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
-	OnProgress     func(received, total int64)
+	OnProgress       func(received, total int64)
 }
 
 // Download pulls the broadcast file at opts.Dest into DestDir, resuming from any

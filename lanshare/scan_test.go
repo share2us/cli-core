@@ -70,7 +70,7 @@ func TestProbeReceiverIdentifiesOnlyShare2Us(t *testing.T) {
 	defer cancel()
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(info.Port))
-	fp, ok := probeReceiver(context.Background(), addr, 3*time.Second)
+	fp, _, ok := probeReceiver(context.Background(), addr, 3*time.Second)
 	if !ok {
 		t.Fatal("a running receiver was not recognised by the probe")
 	}
@@ -91,7 +91,7 @@ func TestProbeReceiverIdentifiesOnlyShare2Us(t *testing.T) {
 			c.Close()
 		}
 	}()
-	if _, ok := probeReceiver(context.Background(), other.Addr().String(), 500*time.Millisecond); ok {
+	if _, _, ok := probeReceiver(context.Background(), other.Addr().String(), 500*time.Millisecond); ok {
 		t.Error("a non-Share2Us listener was reported as a peer")
 	}
 }

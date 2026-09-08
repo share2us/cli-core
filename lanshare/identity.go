@@ -34,3 +34,17 @@ func identityMessage(ekm []byte) []byte {
 	msg = append(msg, ekm...)
 	return msg
 }
+
+// identityFingerprintOf is IdentityFingerprint for a PRIVATE key, and "" for a
+// device that has none. Callers hold the private key and want the public
+// fingerprint; without this every one of them repeats the same type assertion.
+func identityFingerprintOf(id ed25519.PrivateKey) string {
+	if len(id) != ed25519.PrivateKeySize {
+		return ""
+	}
+	pub, ok := id.Public().(ed25519.PublicKey)
+	if !ok {
+		return ""
+	}
+	return IdentityFingerprint(pub)
+}
