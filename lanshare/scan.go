@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"net"
 	"net/netip"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 
 	"github.com/share2us/cli-core/internal/proc"
 	"sort"
@@ -51,8 +54,16 @@ type ScanOptions struct {
 	// Targets overrides the address list. Empty means "work it out": every local
 	// IPv4 subnet small enough to enumerate, plus tailnet peers.
 	Targets []netip.Addr
-	// IncludeTailscale asks the tailscale CLI for peers (default true). Peers are
-	// enumerated, never scanned: the tailnet range is millions of addresses.
+	// IncludeTailscale asks the tailscale CLI for peers. Peers are enumerated,
+	// never scanned: the tailnet range is millions of addresses.
+	//
+	// Default: on for a whole-network scan, off when the caller named its own
+	// Targets, since "probe exactly these" should not quietly grow. Setting it
+	// true ALONGSIDE Targets adds tailnet peers to a targeted scan — which is how
+	// the desktop app keeps tailnet devices visible on its cheap routine pass
+	// without sweeping a subnet. Before this, Targets skipped the tailnet
+	// unconditionally, so a Tailscale device could not appear at all between deep
+	// passes ten minutes apart.
 	IncludeTailscale *bool
 	// SkipLocalSubnets probes only tailnet peers and leaves the local segment
 	// alone. This is the polite default for a background discovery: enumerating a
@@ -86,22 +97,16 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 128
 	}
-	targets := opts.Targets
-	tailnet := map[netip.Addr]bool{}
-	if len(targets) == 0 {
-		if !opts.SkipLocalSubnets {
-			ifaceAddrs, _ := net.InterfaceAddrs()
-			targets = localScanTargets(ifaceAddrs)
-		}
-		if opts.IncludeTailscale == nil || *opts.IncludeTailscale {
-			for _, a := range tailscalePeers(ctx) {
-				if !tailnet[a] {
-					tailnet[a] = true
-					targets = append(targets, a)
-				}
-			}
-		}
+	var local []netip.Addr
+	if len(opts.Targets) == 0 && !opts.SkipLocalSubnets {
+		ifaceAddrs, _ := net.InterfaceAddrs()
+		local = localScanTargets(ifaceAddrs)
 	}
+	var peers []netip.Addr
+	if wantTailnet(opts) {
+		peers = tailscalePeers(ctx)
+	}
+	targets, tailnet := scanTargets(opts.Targets, local, peers)
 
 	var (
 		mu    sync.Mutex
@@ -178,6 +183,55 @@ func probeReceiver(ctx context.Context, addr string, timeout time.Duration) (str
 	return "", false
 }
 
+// wantTailnet decides whether a scan enumerates tailnet peers.
+//
+// On for a whole-network scan, off when the caller named its own Targets — a
+// caller that says "probe exactly these" should not have the list quietly grow.
+// An explicit IncludeTailscale overrides both, which is what lets a targeted
+// scan ALSO pick up the tailnet: the desktop app's routine pass re-probes
+// devices it already knows and needs tailnet peers alongside them.
+func wantTailnet(opts ScanOptions) bool {
+	if opts.IncludeTailscale != nil {
+		return *opts.IncludeTailscale
+	}
+	return len(opts.Targets) == 0
+}
+
+// scanTargets assembles the probe list from the caller's explicit targets, the
+// local subnets and the tailnet peers, and reports which of the results came
+// from the tailnet.
+//
+// Split out from Scan because it is the whole of the decision and none of the
+// network: everything above it is policy that used to be untestable behind a
+// live subnet sweep and a tailscale process.
+func scanTargets(explicit, local, peers []netip.Addr) ([]netip.Addr, map[netip.Addr]bool) {
+	src := explicit
+	if len(src) == 0 {
+		src = local
+	}
+	// Copy rather than append onto the caller's slice: appending to opts.Targets
+	// would write into its backing array whenever it had spare capacity, so a
+	// caller reusing that slice would silently acquire our tailnet peers.
+	targets := append(make([]netip.Addr, 0, len(src)+len(peers)), src...)
+	tailnet := map[netip.Addr]bool{}
+	// Dedupe against what is already queued as well as within the peer list: a
+	// tailnet address can also appear as a local subnet target, and probing the
+	// same host twice doubles the work for no extra discovery.
+	seen := map[netip.Addr]bool{}
+	for _, a := range targets {
+		seen[a] = true
+	}
+	for _, a := range peers {
+		if seen[a] {
+			continue
+		}
+		seen[a] = true
+		tailnet[a] = true
+		targets = append(targets, a)
+	}
+	return targets, tailnet
+}
+
 // localScanTargets turns the machine's own addresses into a list worth probing:
 // every IPv4 subnet small enough to enumerate quickly, minus our own address.
 //
@@ -219,15 +273,55 @@ func localScanTargets(ifaceAddrs []net.Addr) []netip.Addr {
 // tailscalePeers lists tailnet peer addresses. They are ENUMERATED, never
 // scanned: the tailnet is a /10 and walking it is not an option. This is also
 // the only discovery that crosses subnets, which mDNS structurally cannot do.
+// tailscaleBinary finds the tailscale CLI, or "" when it is not installed.
+//
+// PATH alone is not enough, and that is why tailnet devices did not show up in
+// the desktop app: on Windows the installer puts tailscale.exe under
+// C:\Program Files\Tailscale\ and a GUI process inherits the PATH it had at
+// login, which often predates the install; on macOS the App Store build lives
+// inside the .app bundle and is never on PATH at all. Both machines are running
+// Tailscale, and both looked to us like machines that were not.
+func tailscaleBinary() string {
+	if p, err := exec.LookPath("tailscale"); err == nil {
+		return p
+	}
+	var candidates []string
+	switch runtime.GOOS {
+	case "windows":
+		candidates = []string{
+			`C:\Program Files\Tailscale\tailscale.exe`,
+			`C:\Program Files (x86)\Tailscale\tailscale.exe`,
+		}
+		if dir := os.Getenv("ProgramFiles"); dir != "" {
+			candidates = append(candidates, filepath.Join(dir, "Tailscale", "tailscale.exe"))
+		}
+	case "darwin":
+		candidates = []string{
+			"/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+			"/usr/local/bin/tailscale",
+			"/opt/homebrew/bin/tailscale",
+		}
+	default:
+		candidates = []string{"/usr/bin/tailscale", "/usr/local/bin/tailscale"}
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	return ""
+}
+
 func tailscalePeers(ctx context.Context) []netip.Addr {
 	// Look first: on a machine without Tailscale this avoids starting a process
 	// at all, which matters because a desktop app calls this on a timer.
-	if _, err := exec.LookPath("tailscale"); err != nil {
+	bin := tailscaleBinary()
+	if bin == "" {
 		return nil
 	}
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "tailscale", "status", "--json")
+	cmd := exec.CommandContext(cctx, bin, "status", "--json")
 	proc.Hide(cmd) // a GUI app has no console; without this Windows flashes one
 	out, err := cmd.Output()
 	if err != nil {
