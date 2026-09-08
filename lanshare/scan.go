@@ -76,6 +76,16 @@ type ScannedPeer struct {
 	Host        string
 	Port        int
 	Fingerprint string
+	// Name is the device's own display name, from a VERIFIED device card. Empty
+	// when the peer published none — an older build, or a receiver started
+	// without an identity — in which case there is no name to show and the
+	// address stands in, as it always did.
+	Name string
+	// IdentityFingerprint is the peer's STABLE fingerprint from that card, and is
+	// the value to remember a device by. Fingerprint above is the per-session
+	// certificate and changes whenever the peer restarts, so anything that keys
+	// on it sees a different device every time. Empty when there is no card.
+	IdentityFingerprint string
 	// ViaTailscale marks a peer found through the tailnet rather than a local
 	// subnet, which is the case mDNS can never reach at all.
 	ViaTailscale bool
@@ -126,7 +136,7 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			addr := net.JoinHostPort(a.String(), strconv.Itoa(opts.Port))
-			fp, ok := probeReceiver(ctx, addr, opts.Timeout)
+			fp, card, ok := probeReceiver(ctx, addr, opts.Timeout)
 			if !ok {
 				return
 			}
@@ -139,6 +149,7 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 			mu.Lock()
 			found = append(found, ScannedPeer{
 				Host: a.String(), Port: opts.Port, Fingerprint: fp, ViaTailscale: tailnet[a],
+				Name: card.Name, IdentityFingerprint: card.Fingerprint(),
 			})
 			mu.Unlock()
 		}(target)
@@ -152,13 +163,13 @@ func Scan(ctx context.Context, opts ScanOptions) ([]ScannedPeer, error) {
 // fingerprint if it is a Share2Us receiver. The certificate is self-signed by
 // design, so verification is skipped deliberately and the identity comes from
 // the fingerprint the caller then pins — exactly what a pairing string carries.
-func probeReceiver(ctx context.Context, addr string, timeout time.Duration) (string, bool) {
+func probeReceiver(ctx context.Context, addr string, timeout time.Duration) (string, DeviceCard, bool) {
 	dctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	d := net.Dialer{}
 	conn, err := d.DialContext(dctx, "tcp", addr)
 	if err != nil {
-		return "", false
+		return "", DeviceCard{}, false
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
@@ -169,7 +180,7 @@ func probeReceiver(ctx context.Context, addr string, timeout time.Duration) (str
 		MinVersion:         tls.VersionTLS13,
 	})
 	if err := tlsConn.HandshakeContext(dctx); err != nil {
-		return "", false
+		return "", DeviceCard{}, false
 	}
 	defer tlsConn.Close()
 	for _, c := range tlsConn.ConnectionState().PeerCertificates {
@@ -177,10 +188,14 @@ func probeReceiver(ctx context.Context, addr string, timeout time.Duration) (str
 			if fingerprint == "" {
 				fingerprint = certFingerprint(c.Raw)
 			}
-			return fingerprint, true
+			// An unverifiable card is treated as no card at all: the peer is
+			// still a Share2Us receiver, it just has nothing provable to say
+			// about who it is.
+			card, _ := cardFromCert(c)
+			return fingerprint, card, true
 		}
 	}
-	return "", false
+	return "", DeviceCard{}, false
 }
 
 // wantTailnet decides whether a scan enumerates tailnet peers.

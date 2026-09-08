@@ -55,6 +55,17 @@ type ReceiveOptions struct {
 	// AllowIPs restricts accepted source IPs. With AllowIPs and no password, the
 	// mode is allow-ip (network-identity auth).
 	AllowIPs []string
+	// Identity is this device's PERSISTENT Ed25519 identity key. When set, the
+	// listener's certificate carries a device card (devicecard.go) so a scan can
+	// learn who this device is — its stable fingerprint and its name — instead of
+	// only the per-session certificate fingerprint, which changes every time the
+	// receiver restarts. Optional: without it the listener behaves exactly as it
+	// did before, and peers see an address with no name.
+	Identity ed25519.PrivateKey
+	// DeviceName is the display name published in that card. Ignored without
+	// Identity, since an unsigned name is the attacker-choosable label the card
+	// exists to replace.
+	DeviceName string
 	// IsTrustedSender reports whether a VERIFIED sender identity key belongs to a
 	// device the receiver has already trusted (ADR-034: the server-signed trust
 	// list). A trusted sender may transfer without the receiver's password.
@@ -107,8 +118,14 @@ type ListenInfo struct {
 	BindAddr    string
 	Port        int
 	Fingerprint string // self-signed cert SHA-256 (for QR / pairing)
-	Passphrase  string // effective password in password mode; "" otherwise
-	Mode        string // ModePassword | ModeAllowIP | ModeOpen
+	// IdentityFingerprint is this device's STABLE fingerprint, when an Identity
+	// was supplied. Fingerprint above changes every session, so it is the wrong
+	// thing to show as "this device's code" and the wrong thing for a peer to
+	// remember; this is the value that matches what the other end sees on the
+	// card and in the transfer prompt.
+	IdentityFingerprint string
+	Passphrase          string // effective password in password mode; "" otherwise
+	Mode                string // ModePassword | ModeAllowIP | ModeOpen
 }
 
 // ReceiveResult reports a completed transfer. SenderKey is the peer's verified
@@ -158,7 +175,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 	if err != nil {
 		return ReceiveResult{}, err
 	}
-	cert, fingerprint, err := generateEphemeralCert()
+	cert, fingerprint, err := generateEphemeralCert(opts.Identity, opts.DeviceName)
 	if err != nil {
 		return ReceiveResult{}, err
 	}
@@ -172,11 +189,12 @@ func Receive(ctx context.Context, opts ReceiveOptions) (ReceiveResult, error) {
 
 	if opts.OnListen != nil {
 		opts.OnListen(ListenInfo{
-			BindAddr:    opts.Bind,
-			Port:        port,
-			Fingerprint: fingerprint,
-			Passphrase:  password,
-			Mode:        mode,
+			BindAddr:            opts.Bind,
+			Port:                port,
+			Fingerprint:         fingerprint,
+			IdentityFingerprint: identityFingerprintOf(opts.Identity),
+			Passphrase:          password,
+			Mode:                mode,
 		})
 	}
 

@@ -5,6 +5,7 @@ package lanshare
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"time"
 )
 
@@ -27,7 +29,13 @@ const certValidity = 24 * time.Hour
 // receive session and returns it alongside the lowercase hex SHA-256 fingerprint
 // of its DER certificate (the value embedded in the pairing string / QR and
 // pinned by a sender).
-func generateEphemeralCert() (tls.Certificate, string, error) {
+//
+// When an identity key is supplied the certificate also carries a device card
+// (devicecard.go): the device's persistent identity and display name, signed
+// over this certificate's own public key. That is what lets a scan learn who a
+// device IS, rather than only that something answered. A nil identity produces
+// the same certificate as before, with no card.
+func generateEphemeralCert(id ed25519.PrivateKey, deviceName string) (tls.Certificate, string, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, "", fmt.Errorf("generate key: %w", err)
@@ -35,6 +43,10 @@ func generateEphemeralCert() (tls.Certificate, string, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return tls.Certificate{}, "", fmt.Errorf("generate serial: %w", err)
+	}
+	card, err := buildCardURI(id, deviceName, &key.PublicKey)
+	if err != nil {
+		return tls.Certificate{}, "", fmt.Errorf("build device card: %w", err)
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
@@ -44,6 +56,9 @@ func generateEphemeralCert() (tls.Certificate, string, error) {
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+	}
+	if card != nil {
+		tmpl.URIs = []*url.URL{card}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
