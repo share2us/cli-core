@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/share2us/cli-core/lanid"
 	"io"
@@ -155,6 +156,13 @@ type UploadCreateRequest struct {
 	Encrypted      bool           `json:"encrypted,omitempty"`
 	EncryptionAlgo string         `json:"encryption_algo,omitempty"`
 	Recipients     []string       `json:"recipients,omitempty"`
+	// Visibility is "private" for a share only the owner's account can open, or
+	// "" for the default (public). A PRIVATE share needs no recipients: the
+	// gateway admits the recipient list OR an active user of the owning account,
+	// so an empty list is exactly "only me" (ADR-022). Older servers ignore the
+	// field and produce a public share, so a client that must not create a public
+	// link should verify the result rather than assume.
+	Visibility     string         `json:"visibility,omitempty"`
 	MaxViews       uint64         `json:"max_views,omitempty"`
 	AllowedDomains []string       `json:"allowed_domains,omitempty"`
 	DeniedDomains  []string       `json:"denied_domains,omitempty"`
@@ -260,6 +268,23 @@ type ShareRef struct {
 	LiveUpdate bool   `json:"live_update"`
 	Version    uint64 `json:"version"`
 	Targeted   bool   `json:"targeted,omitempty"`
+	// RecipientRestricted is what the share ACTUALLY is, as reported by the
+	// server -- not what was requested. A POINTER on purpose: nil means the
+	// server did not say (it predates the field), which a caller that asked for a
+	// private share must treat as "I did not get one", because an older server
+	// ignores visibility and returns a public link with a 201.
+	RecipientRestricted *bool `json:"recipient_restricted,omitempty"`
+}
+
+// IsPrivate reports whether the created share is recipient-restricted, and
+// whether the server actually said so. Callers that requested a private share
+// must check `known`: an unknown answer is not a "no", it is an older server that
+// silently made the share PUBLIC.
+func (s ShareRef) IsPrivate() (private, known bool) {
+	if s.RecipientRestricted == nil {
+		return false, false
+	}
+	return *s.RecipientRestricted, true
 }
 
 type UploadCompleteResponse struct {
@@ -647,6 +672,31 @@ func (c *Client) ResealQueue(ctx context.Context) (ResealQueueResponse, error) {
 	var out ResealQueueResponse
 	err := c.doJSON(ctx, http.MethodGet, "/v1/shares/reseal-queue", nil, &out)
 	return out, err
+}
+
+// UnlockOwnShare mints a short-lived gateway unlock token for a share this
+// account OWNS, so the owner can download their own recipient-restricted share
+// without a browser (ADR-022, 2026-09-09 amendment).
+//
+// The other three verification layers are browser-shaped -- the invite link
+// arrives in a recipient's mailbox, the session hop is a portal form-POST, the
+// code needs an HTML form -- and none of them is reachable from a CLI. This mints
+// the SAME token they produce, for the caller's own email, to be replayed as the
+// gateway's ?u= parameter.
+//
+// Requires an interactive login: the endpoint is session-only, so a personal API
+// token is refused server-side.
+func (c *Client) UnlockOwnShare(ctx context.Context, publicID string) (string, error) {
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/shares/"+url.PathEscape(publicID)+"/unlock", nil, &out); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(out.Token) == "" {
+		return "", errors.New("server returned an empty unlock token")
+	}
+	return out.Token, nil
 }
 
 // SubmitReseal uploads a content key re-sealed to a recipient's new device public key.

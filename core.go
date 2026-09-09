@@ -66,7 +66,7 @@ Usage:
   %s untrust|unblock <email>
   %s incoming [approve|reject <id>]
   %s devices
-  %s <file> [--expires DUR] [--name NAME] [--password] [--one-time] [--encrypt] [--device ALIAS] [--contact EMAIL] [--email EMAIL] [--to EMAIL] [--max-views N] [--allow-domain DOMAIN] [--deny-domain DOMAIN] [--restrict|--unrestrict] [--new|--fresh] [-l|--live] [-w|--watch] [--allow-secrets|--no-scan] [--qr|--qrl] [--json]
+  %s <file> [--expires DUR] [--name NAME] [--password] [--one-time] [--encrypt] [--device ALIAS] [--contact EMAIL] [--email EMAIL] [--to EMAIL] [--private] [--max-views N] [--allow-domain DOMAIN] [--deny-domain DOMAIN] [--restrict|--unrestrict] [--new|--fresh] [-l|--live] [-w|--watch] [--allow-secrets|--no-scan] [--qr|--qrl] [--json]
   %s get|-g <url-with-#k> [--key KEY] [--output PATH]
   %s pull <url-or-public-id> [--output PATH]
   %s pull --all [--output DIR]
@@ -118,6 +118,12 @@ Access controls:
 Secret scan:
   --allow-secrets, --force    Proceed after local gitleaks findings
   --no-scan                   Skip local secret scanning
+
+Private files (no link shared with anyone):
+  --private                   Upload without sharing it. Only your own account can open
+                              the share, and passing its URL back to this command gets the
+                              file on any device you are signed in on. Composes with
+                              --expires / --password / --keep.
 
 Email shares:
   --email EMAIL               Share with a recipient email; repeat or comma-separate.
