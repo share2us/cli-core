@@ -939,3 +939,91 @@ func TestPushResumeRefusesToPlaceMismatchedContent(t *testing.T) {
 		t.Fatalf("receiver kept an untrustworthy partial: %v", left)
 	}
 }
+
+// §AJ #7. The sender's self-declared name went into the approval prompt raw. An
+// unauthenticated peer could therefore write terminal escapes into the line the
+// user reads before pressing y: clear it, move the cursor up, overwrite the
+// file name, add a fake "trusted device" suffix. Every control and direction
+// override must be gone before OnRequest ever sees the string.
+func TestHostileSenderNameIsCleanedBeforeThePrompt(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	var gotName string
+	info, outCh, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: t.TempDir(),
+		OnRequest: func(r RequestInfo) bool { gotName = r.SenderName; return true },
+	})
+	defer cancel()
+	hostile := "\x1b[2K\x1b[1A\u202eLaptop\u2069\x9b0m (trusted device)\r\n"
+	if _, err := Send(context.Background(), "id.txt", 2, false, bytes.NewReader([]byte("hi")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Identity: priv, SenderName: hostile}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if out := <-outCh; out.err != nil {
+		t.Fatalf("Receive: %v", out.err)
+	}
+	for _, r := range gotName {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			t.Fatalf("a control/bidi rune %U reached the prompt: %q", r, gotName)
+		}
+	}
+	if !strings.Contains(gotName, "Laptop") {
+		t.Fatalf("the legitimate part of the name was lost: %q", gotName)
+	}
+}
+
+// A file name the receiver would refuse to write is refused BEFORE the prompt,
+// so nobody is asked to approve a name that is not the one that would land.
+func TestHostileFileNameIsRefusedBeforeThePrompt(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	prompted := false
+	info, _, cancel := startReceiver(t, ReceiveOptions{
+		Bind: "127.0.0.1", NoPassword: true, DestDir: t.TempDir(),
+		OnRequest: func(RequestInfo) bool { prompted = true; return true },
+	})
+	defer cancel()
+	_, err := Send(context.Background(), "report\x1b[2K.pdf", 2, false, bytes.NewReader([]byte("hi")),
+		SendOptions{Dest: "127.0.0.1:" + strconv.Itoa(info.Port), Identity: priv, SenderName: "x"})
+	if err == nil {
+		t.Fatal("a file name with a control character was accepted")
+	}
+	if prompted {
+		t.Fatal("the user was asked to approve a name the receiver would never write")
+	}
+}
+
+// The other direction: on an approve-mode broadcast the DOWNLOADER names itself.
+func TestHostileDownloaderNameIsCleanedBeforeThePrompt(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "f.bin")
+	os.WriteFile(src, []byte("secret payload"), 0o600)
+	var gotName string
+	info, cancel := startBroadcaster(t, BroadcastOptions{
+		Bind: "127.0.0.1", Path: src, Access: AccessApprove,
+		OnRequest: func(r RequestInfo) bool { gotName = r.SenderName; return true },
+	})
+	defer cancel()
+	_, err := Download(context.Background(), DownloadOptions{
+		Dest: "127.0.0.1:" + strconv.Itoa(info.Port), PinFingerprint: info.Fingerprint, Name: "f.bin", Size: 14,
+		DestDir: t.TempDir(), DownloaderName: "\x1b]0;pwned\x07Phone\u202e",
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if strings.ContainsAny(gotName, "\x1b\x07\u202e") || !strings.Contains(gotName, "Phone") {
+		t.Fatalf("downloader name reached the prompt dirty: %q", gotName)
+	}
+}
+
+func TestSanitizeName(t *testing.T) {
+	cases := map[string]string{
+		"  plain name  ":                    "plain name",
+		"\x1b[31mred\x1b[0m":                "[31mred[0m",
+		"\u202eexe.png":                     "exe.png",
+		"bad\xffutf8":                       "",
+		strings.Repeat("é", MaxNameRunes+5): strings.Repeat("é", MaxNameRunes),
+	}
+	for in, want := range cases {
+		if got := SanitizeName(in); got != want {
+			t.Errorf("SanitizeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

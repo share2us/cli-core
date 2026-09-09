@@ -184,7 +184,33 @@ func cardFromCert(leaf *x509.Certificate) (DeviceCard, bool) {
 // something else entirely. The signature covers the RAW bytes, so this runs
 // AFTER verification — cleaning first would let a device fail to verify its own
 // card.
-func sanitizeCardName(s string) string {
+func sanitizeCardName(s string) string { return stripControls(s) }
+
+// MaxNameRunes caps any peer-supplied label. A name is a line in a prompt or a
+// list; past this it is padding meant to push something off-screen.
+const MaxNameRunes = 120
+
+// SanitizeName is the ONE cleaner for every label a remote peer chooses about
+// itself or its file before that label reaches a prompt, a device list, a log
+// line, or the account's trust list: invalid UTF-8 becomes empty, C0/C1 controls
+// (terminal escapes: cursor moves, line clears, OSC titles) and bidirectional
+// overrides are dropped, whitespace is trimmed, and the result is capped at
+// MaxNameRunes. Security audit §AJ #7: an unauthenticated LAN peer used to
+// control the exact text of the transfer-approval prompt, and that text was
+// then stored as the trusted-device label for the whole account.
+func SanitizeName(s string) string {
+	s = stripControls(s)
+	n := 0
+	for i := range s {
+		if n == MaxNameRunes {
+			return strings.TrimSpace(s[:i])
+		}
+		n++
+	}
+	return s
+}
+
+func stripControls(s string) string {
 	if !utf8Valid(s) {
 		return ""
 	}

@@ -162,6 +162,9 @@ func handleDownload(ctx context.Context, conn net.Conn, opts BroadcastOptions, s
 	if err := readControl(conn, msgDownloadReq, &req); err != nil {
 		return
 	}
+	// The downloader names itself; that name goes into the approval prompt and
+	// the activity feed. Clean it once here, before either (§AJ #7).
+	req.DownloaderName = SanitizeName(req.DownloaderName)
 
 	// Verify the downloader's optional identity (bound to this TLS session).
 	var peerKey []byte
