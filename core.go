@@ -59,7 +59,7 @@ Usage:
   %s tui
   %s mcp serve
   %s mcp token [--url URL|--staging] [--json]
-  %s receive [--watch] [--out PATH]
+  %s receive [DIR] [--all|--id ID] [--watch] [--out PATH]
   %s inbound [disallowed|approvals|auto]
   %s contacts
   %s trust|block|require-approval <email>
@@ -138,6 +138,16 @@ Email shares:
 
 Device shares:
   --device, -d ALIAS          Send to one of your own logged-in devices with E2E encryption
+
+Receiving (files sent to this device):
+  receive                     Show what is waiting, and when the oldest expires
+  receive DIR                 Choose which of them to save into DIR
+  receive --all               Save everything to your receive folder
+  receive --id ID             Save just that one
+  receive --watch             Keep running and save everything as it arrives
+  config set-receive-dir P    Where saved files go (default: your Downloads folder)
+  config set-receive-auto on|off
+                              Whether a background receiver saves them for you
 
 Contact shares (cross-account device E2E):
   --contact EMAIL             Force E2E to another user's device(s) (fails if not a contact);
