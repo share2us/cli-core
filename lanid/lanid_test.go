@@ -313,3 +313,27 @@ func flipLastByte(t *testing.T, encoded string) string {
 	raw[len(raw)-1] ^= 0x01
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
+
+// The production and staging signing keys must both be compiled in, or a client
+// silently refuses every trust list from that environment -- which shows up as
+// "my trusted device keeps asking", not as an error (§AJ #10).
+func TestBuiltinTrustKeysCoverBothEnvironments(t *testing.T) {
+	const (
+		prod    = "fdce17424db15bee0a7f859e93f31f732296870a4209f639e02ec6286c6d327c"
+		staging = "87be5b415b53731efbc0fd79e79797c055ea9a9474264acf4965f118028a5e44"
+	)
+	for name, key := range map[string]string{"production": prod, "staging": staging} {
+		if !trustKeyAllowed(key) {
+			t.Errorf("the %s signing key is not compiled in", name)
+		}
+	}
+	// A key nobody minted is still refused.
+	if trustKeyAllowed(strings.Repeat("ab", 32)) {
+		t.Fatal("an unknown key was accepted")
+	}
+	for _, k := range BuiltinTrustKeys {
+		if len(k) != 64 {
+			t.Fatalf("built-in key %q is not a 64-character hex ed25519 key", k)
+		}
+	}
+}

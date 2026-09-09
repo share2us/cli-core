@@ -53,11 +53,8 @@ type signedTrustFile struct {
 // release that lists both keys. Self-hosted or development servers add theirs
 // through SHARE2US_TRUST_KEYS.
 var BuiltinTrustKeys = []string{
+	"fdce17424db15bee0a7f859e93f31f732296870a4209f639e02ec6286c6d327c", // api.share2.us (kid 69358415)
 	"87be5b415b53731efbc0fd79e79797c055ea9a9474264acf4965f118028a5e44", // api.staging.share2.us (kid d42aae90)
-	// PRODUCTION KEY PENDING: read from GET /v1/lan/trust/key on api.share2.us
-	// once the API build that makes that route public is deployed, then add it
-	// here BEFORE this client ships (until then a prod cache is refused, which
-	// only means prompts instead of auto-accept).
 }
 
 // TrustKeysEnv lists extra accepted server keys, comma-separated hex, for
