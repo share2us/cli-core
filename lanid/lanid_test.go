@@ -178,6 +178,9 @@ func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 // prompt, no code, no MFA. And a list the server genuinely signed for ANOTHER
 // account verified too. Neither may be honoured.
 func TestTrustCacheRefusesUnpinnedKeyAndForeignAccount(t *testing.T) {
+	// Start from nothing and leave nothing: this test writes the cache file
+	// directly, and the package's other tests read the same path.
+	_ = ResetTrust()
 	t.Cleanup(func() { _ = ResetTrust() })
 	const fp = "b676f58a180a7fc204ab3a1c0d24eb9eec33b66faa066569eef3fa0d8096d37c"
 	p, _ := signedTrustPath()
@@ -220,5 +223,75 @@ func TestTrustCacheRefusesUnpinnedKeyAndForeignAccount(t *testing.T) {
 	CurrentAccountID = nil
 	if _, ok := Lookup(fp); ok {
 		t.Fatal("trusted with no account binding")
+	}
+}
+
+// §AJ low batch: the identity write discarded its error, so a device that could
+// not save its key generated a NEW one every run -- appearing as a different
+// device each time and breaking every trust relationship it had.
+func TestIdentityIsStableAcrossRuns(t *testing.T) {
+	_ = ResetTrust()
+	first, err := loadOrCreateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := loadOrCreateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(second) {
+		t.Fatal("a second run produced a different identity")
+	}
+}
+
+// The file is written 0600, and an existing one with looser permissions is
+// tightened rather than left alone.
+func TestIdentityFilePermissions(t *testing.T) {
+	if _, err := loadOrCreateIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := configDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "lan_identity.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("identity written %o, want 0600", perm)
+	}
+
+	// Loosen it the way a bad umask or a restore-from-backup would, then read
+	// again: the next load must put it back.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadOrCreateIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	info, _ = os.Stat(path)
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("a world-readable identity was left at %o", perm)
+	}
+}
+
+// A key that cannot be saved is reported, not silently replaced next run.
+func TestUnsavableIdentityIsAnError(t *testing.T) {
+	dir, err := configDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "lan_identity.json")
+	_ = os.Remove(path)
+	// Make the directory unwritable so the temp file cannot be created.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Skipf("cannot make the config dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := loadOrCreateIdentity(); err == nil {
+		t.Fatal("an identity that could not be saved was returned as if it had been")
 	}
 }
