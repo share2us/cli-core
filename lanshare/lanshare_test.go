@@ -1027,3 +1027,44 @@ func TestSanitizeName(t *testing.T) {
 		}
 	}
 }
+
+// §AJ #32: on the PULL path (discover --download) the transfer size came
+// straight from the broadcaster -- the mDNS TXT record, then the accept frame
+// -- with none of the checks the push path applies. A peer could advertise a
+// small file and stream until the disk filled.
+func TestDownloadRefusesASizeRaisedAfterApproval(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "small.bin")
+	if err := os.WriteFile(src, []byte("only a few bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, cancel := startBroadcaster(t, BroadcastOptions{Bind: "127.0.0.1", Path: src, Access: AccessAll})
+	defer cancel()
+
+	// The downloader agreed to 16 bytes; the broadcaster's accept frame says
+	// otherwise (its real size), which must be refused rather than followed.
+	_, err := Download(context.Background(), DownloadOptions{
+		Dest: "127.0.0.1:" + strconv.Itoa(info.Port), PinFingerprint: info.Fingerprint,
+		Name: "small.bin", Size: 4, DestDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("a size raised after approval was accepted")
+	}
+	if !strings.Contains(err.Error(), "raised the size") {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+}
+
+func TestEnsureFreeSpaceRefusesTheImpossible(t *testing.T) {
+	dir := t.TempDir()
+	if err := ensureFreeSpace(dir, 1024); err != nil {
+		t.Fatalf("a kilobyte was refused: %v", err)
+	}
+	// More than any disk holds.
+	if err := ensureFreeSpace(dir, 1<<60); err == nil {
+		t.Fatal("an exabyte transfer was accepted")
+	}
+	if err := ensureFreeSpace(dir, 0); err != nil {
+		t.Fatalf("a zero-byte transfer was refused: %v", err)
+	}
+}
