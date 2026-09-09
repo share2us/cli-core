@@ -144,7 +144,7 @@ func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 
 	// A tampered payload does not verify and is not saved.
 	bad := list
-	bad.Payload = bad.Payload[:len(bad.Payload)-2] + "AA"
+	bad.Payload = flipLastByte(t, bad.Payload)
 	if err := SaveSignedTrust(bad, pubHex); err == nil {
 		t.Fatal("tampered list saved")
 	}
@@ -159,7 +159,7 @@ func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 	data, _ := os.ReadFile(p)
 	var f signedTrustFile
 	_ = json.Unmarshal(data, &f)
-	f.List.Signature = f.List.Signature[:len(f.List.Signature)-2] + "AA"
+	f.List.Signature = flipLastByte(t, f.List.Signature)
 	out, _ := json.Marshal(f)
 	_ = os.WriteFile(p, out, 0o600)
 	if _, ok := Lookup(fp); ok {
@@ -294,4 +294,22 @@ func TestUnsavableIdentityIsAnError(t *testing.T) {
 	if _, err := loadOrCreateIdentity(); err == nil {
 		t.Fatal("an identity that could not be saved was returned as if it had been")
 	}
+}
+
+// flipLastByte corrupts a base64url value by flipping a bit in the DECODED
+// bytes.
+//
+// These tests used to corrupt by replacing the last two base64 characters with
+// "AA", which is not reliably a corruption: the final character of an Ed25519
+// signature carries only two significant bits, so that edit left the value
+// unchanged around 6% of the time and the assertion silently passed on an
+// intact signature. That is what made this test flaky.
+func flipLastByte(t *testing.T, encoded string) string {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(raw) == 0 {
+		t.Fatalf("not decodable base64url: %v", err)
+	}
+	raw[len(raw)-1] ^= 0x01
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
