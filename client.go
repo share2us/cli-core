@@ -147,15 +147,15 @@ type UploadCreateRequest struct {
 	ExpiresIn    string `json:"expires_in,omitempty"`
 	// NoExpiry keeps the share indefinitely (no expiry). When true, ExpiresIn is
 	// ignored server-side. See --keep / --expires=none.
-	NoExpiry       bool           `json:"no_expiry,omitempty"`
-	SHA256         string         `json:"sha256,omitempty"`
-	SourceRef      string         `json:"source_ref,omitempty"`
-	New            bool           `json:"new"`
-	Password       string         `json:"password,omitempty"`
-	OneTime        bool           `json:"one_time,omitempty"`
-	Encrypted      bool           `json:"encrypted,omitempty"`
-	EncryptionAlgo string         `json:"encryption_algo,omitempty"`
-	Recipients     []string       `json:"recipients,omitempty"`
+	NoExpiry       bool     `json:"no_expiry,omitempty"`
+	SHA256         string   `json:"sha256,omitempty"`
+	SourceRef      string   `json:"source_ref,omitempty"`
+	New            bool     `json:"new"`
+	Password       string   `json:"password,omitempty"`
+	OneTime        bool     `json:"one_time,omitempty"`
+	Encrypted      bool     `json:"encrypted,omitempty"`
+	EncryptionAlgo string   `json:"encryption_algo,omitempty"`
+	Recipients     []string `json:"recipients,omitempty"`
 	// Visibility is "private" for a share only the owner's account can open, or
 	// "" for the default (public). A PRIVATE share needs no recipients: the
 	// gateway admits the recipient list OR an active user of the owning account,
