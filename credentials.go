@@ -14,10 +14,13 @@ import (
 const CredentialSchemaVersion = 1
 
 type Credential struct {
-	SchemaVersion    int    `json:"schema_version,omitempty"`
-	APIBase          string `json:"api_base"`
-	Token            string `json:"token"`
-	Email            string `json:"email"`
+	SchemaVersion int    `json:"schema_version,omitempty"`
+	APIBase       string `json:"api_base"`
+	Token         string `json:"token"`
+	Email         string `json:"email"`
+	// AccountID binds the cached trusted-device list to this login (§AJ #10).
+	// Set at login; learned from the first verified list for older logins.
+	AccountID        string `json:"account_id,omitempty"`
 	DeviceSessionID  string `json:"device_session_id,omitempty"`
 	DevicePublicKey  string `json:"device_public_key,omitempty"`
 	DevicePrivateKey string `json:"device_private_key,omitempty"`

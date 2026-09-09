@@ -162,6 +162,9 @@ func handleDownload(ctx context.Context, conn net.Conn, opts BroadcastOptions, s
 	if err := readControl(conn, msgDownloadReq, &req); err != nil {
 		return
 	}
+	// The downloader names itself; that name goes into the approval prompt and
+	// the activity feed. Clean it once here, before either (§AJ #7).
+	req.DownloaderName = SanitizeName(req.DownloaderName)
 
 	// Verify the downloader's optional identity (bound to this TLS session).
 	var peerKey []byte
@@ -337,12 +340,30 @@ func Download(ctx context.Context, opts DownloadOptions) (ReceiveResult, error) 
 		}
 		broadcasterKey = acc.IdentityPub
 	}
+	// The PULL path took the size straight from the broadcaster's accept frame
+	// (or from an mDNS TXT record before that), with none of the checks the
+	// push path applies: a peer could advertise a small file and then stream
+	// until the disk filled, and a nonsense size would be trusted as-is
+	// (§AJ #32).
 	total := opts.Size
 	if acc.Size > 0 {
 		total = acc.Size
 	}
+	if total < 0 || total > maxTransferBytes {
+		return ReceiveResult{}, fmt.Errorf("lanshare: broadcaster declared an implausible size (%d bytes)", total)
+	}
+	// A size the peer raised above what we agreed to download is a different
+	// file from the one that was approved.
+	if opts.Size > 0 && total > opts.Size {
+		return ReceiveResult{}, fmt.Errorf("lanshare: broadcaster raised the size after approval (%d > %d bytes)", total, opts.Size)
+	}
+	if err := ensureFreeSpace(destDir, total-offset); err != nil {
+		return ReceiveResult{}, err
+	}
 
-	_ = conn.SetDeadline(time.Time{})
+	// The transfer gets a deadline derived from its size rather than none at
+	// all, for the same reason the push path does (§AJ #31).
+	_ = conn.SetDeadline(transferDeadline(time.Now(), total-offset))
 	got, localSHA, rerr := receiveResumable(ctx, conn, partialPath, offset, total, opts.OnProgress)
 	if rerr != nil {
 		return ReceiveResult{}, rerr // partial kept for a later resume

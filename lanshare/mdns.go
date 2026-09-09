@@ -158,9 +158,14 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 			if isSelfFingerprint(fp) || isSelfHost(host, local) {
 				continue
 			}
-			name := txtValue(e.Text, "dn")
+			// Anything on the LAN can publish a TXT record; the display name and
+			// offered file name go straight into the discover list (§AJ #7).
+			name := SanitizeName(txtValue(e.Text, "dn"))
 			if name == "" {
-				name = e.Instance
+				name = SanitizeName(e.Instance)
+			}
+			if name == "" {
+				name = "unnamed device"
 			}
 			var fsize int64
 			if s := txtValue(e.Text, "sz"); s != "" {
@@ -184,7 +189,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 				Fingerprint: fp,
 				Mode:        txtValue(e.Text, "mode"),
 				IsBroadcast: txtValue(e.Text, "bc") == "1",
-				FileName:    txtValue(e.Text, "fn"),
+				FileName:    SanitizeName(txtValue(e.Text, "fn")),
 				FileSize:    fsize,
 			}
 		}

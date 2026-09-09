@@ -414,6 +414,17 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		return ReceiveResult{}, false, nil
 	}
 
+	// Resolve + guard the destination path FIRST. The name the user is asked to
+	// approve must be the name that lands on disk, and a name destPath would
+	// refuse (separators, control characters, direction overrides) must never
+	// be shown at all: it used to reach the prompt raw, so a peer could write
+	// terminal escapes into the approval line itself (§AJ #7).
+	outPath, err := destPath(opts.DestDir, h.Name)
+	if err != nil {
+		sendError(conn, err.Error())
+		return ReceiveResult{}, false, nil
+	}
+
 	// Interactive approval: let the receiver accept or reject this specific
 	// transfer (sender + file already known) before anything lands. A decline is
 	// not an error — the receiver keeps listening.
@@ -421,17 +432,10 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		// Approval may take user time; extend the deadline past the handshake
 		// budget so a considered "accept" isn't killed mid-decision.
 		_ = conn.SetDeadline(time.Now().Add(2 * time.Minute))
-		if !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: h.Name, Size: h.Size, IsDir: h.IsDir, SenderKey: senderKey, SenderName: h.SenderName}) {
+		if !opts.OnRequest(RequestInfo{PeerIP: peerIP, Name: filepath.Base(outPath), Size: h.Size, IsDir: h.IsDir, SenderKey: senderKey, SenderName: SanitizeName(h.SenderName)}) {
 			_ = writeJSON(conn, msgAccept, accept{OK: false, Reason: "declined by the receiver"})
 			return ReceiveResult{}, false, nil
 		}
-	}
-
-	// Resolve + guard the destination path.
-	outPath, err := destPath(opts.DestDir, h.Name)
-	if err != nil {
-		sendError(conn, err.Error())
-		return ReceiveResult{}, false, nil
 	}
 	if _, statErr := os.Stat(outPath); statErr == nil && !opts.Overwrite {
 		reason := fmt.Sprintf("%q already exists; re-run the receiver with --overwrite", filepath.Base(outPath))
@@ -455,7 +459,14 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 	}
 
 	// Receive the stream into a temp file in the destination dir, then rename.
-	_ = conn.SetDeadline(time.Time{})
+	//
+	// The deadline used to be cleared outright, leaving the transfer bounded
+	// only by the 60-second per-frame read deadline inside the loops: a peer
+	// could drip one frame every 59 seconds and hold the receiver's connection
+	// for as long as it liked (§AJ #31). Give the whole transfer a deadline
+	// derived from the size the sender declared, so a real transfer -- even a
+	// slow one -- always finishes inside it and a stalling one does not.
+	_ = conn.SetDeadline(transferDeadline(time.Now(), h.Size))
 	var (
 		written int64
 		sum     string
