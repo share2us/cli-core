@@ -1250,7 +1250,3 @@ func (c *Client) LanTrustRevoke(ctx context.Context, fingerprint string) (LanTru
 	return out, err
 }
 
-// SaveTrustList verifies and caches a fetched list so lanid.Lookup can use it.
-func SaveTrustList(list LanTrustList) error {
-	return lanid.SaveSignedTrust(list.Signed, list.PublicKey)
-}

@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -88,10 +90,23 @@ func signTestList(t *testing.T, priv ed25519.PrivateKey, devices []TrustedDevice
 
 const ListTTLForTests = 24 * time.Hour
 
+// bindTestAccount makes the cache readable for account "acct" (the one
+// signTestList issues for) and pins the given server keys through the env
+// override, the way a self-hosted server would.
+func bindTestAccount(t *testing.T, pubHexes ...string) {
+	t.Helper()
+	prev := CurrentAccountID
+	CurrentAccountID = func() string { return "acct" }
+	t.Cleanup(func() { CurrentAccountID = prev })
+	t.Setenv(TrustKeysEnv, strings.Join(pubHexes, ","))
+}
+
 func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 	t.Cleanup(func() { _ = ResetTrust() })
 	pub, priv, _ := ed25519.GenerateKey(nil)
 	pubHex := hex.EncodeToString(pub)
+	pub2, priv2, _ := ed25519.GenerateKey(nil)
+	bindTestAccount(t, pubHex, hex.EncodeToString(pub2))
 	const fp = "b676f58a180a7fc204ab3a1c0d24eb9eec33b66faa066569eef3fa0d8096d37c"
 
 	// Nothing cached: nothing trusted; local writers are retired.
@@ -122,7 +137,6 @@ func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 	}
 
 	// A different server key is refused (not silently re-pinned).
-	pub2, priv2, _ := ed25519.GenerateKey(nil)
 	other := signTestList(t, priv2, []TrustedDevice{{Fingerprint: fp, Name: "evil", Mode: ModeAuto}}, time.Now().Add(time.Hour))
 	if err := SaveSignedTrust(other, hex.EncodeToString(pub2)); !errors.Is(err, ErrTrustKeyChanged) {
 		t.Fatalf("key change should be refused, got %v", err)
@@ -156,5 +170,55 @@ func TestSignedTrustCacheIsTheOnlySourceOfTrust(t *testing.T) {
 	}
 	if _, ok := Lookup(fp); ok {
 		t.Fatal("trusted after reset")
+	}
+}
+
+// §AJ #10. The pinned key used to be read from the cache file itself, so any
+// local process could write a self-signed list and be "trusted" on auto with no
+// prompt, no code, no MFA. And a list the server genuinely signed for ANOTHER
+// account verified too. Neither may be honoured.
+func TestTrustCacheRefusesUnpinnedKeyAndForeignAccount(t *testing.T) {
+	t.Cleanup(func() { _ = ResetTrust() })
+	const fp = "b676f58a180a7fc204ab3a1c0d24eb9eec33b66faa066569eef3fa0d8096d37c"
+	p, _ := signedTrustPath()
+	_ = os.MkdirAll(filepath.Dir(p), 0o700)
+
+	// 1. Self-signed by a local attacker: key unknown to this build.
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	CurrentAccountID = func() string { return "acct" }
+	t.Cleanup(func() { CurrentAccountID = nil })
+	forged := signTestList(t, priv, []TrustedDevice{{Fingerprint: fp, Name: "evil", Mode: ModeAuto}}, time.Now().Add(time.Hour))
+	out, _ := json.Marshal(signedTrustFile{PublicKey: hex.EncodeToString(pub), List: forged, FetchedAt: time.Now()})
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := Lookup(fp); ok {
+		t.Fatalf("a self-signed cache under an unpinned key was honoured: %+v", d)
+	}
+	if err := SaveSignedTrust(forged, hex.EncodeToString(pub)); !errors.Is(err, ErrTrustKeyNotPinned) {
+		t.Fatalf("SaveSignedTrust under an unpinned key: %v", err)
+	}
+
+	// 2. Genuinely signed (key pinned) but for someone else's account.
+	t.Setenv(TrustKeysEnv, hex.EncodeToString(pub))
+	CurrentAccountID = func() string { return "victim-account" }
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if d, ok := Lookup(fp); ok {
+		t.Fatalf("a list for another account was honoured: %+v", d)
+	}
+	if ok, _ := TrustCacheStatus(); ok {
+		t.Fatal("status reports a valid cache for another account")
+	}
+	// Same list, right account: honoured (the two checks above were the reason).
+	CurrentAccountID = func() string { return "acct" }
+	if _, ok := Lookup(fp); !ok {
+		t.Fatal("a pinned, correctly bound cache was refused")
+	}
+	// No binding at all: nothing is trusted.
+	CurrentAccountID = nil
+	if _, ok := Lookup(fp); ok {
+		t.Fatal("trusted with no account binding")
 	}
 }

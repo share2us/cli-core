@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -44,6 +45,34 @@ type signedTrustFile struct {
 	FetchedAt time.Time       `json:"fetched_at"`
 }
 
+// BuiltinTrustKeys are the server trust-signing public keys (hex Ed25519) this
+// build accepts. They are compiled in because the cache file is the thing being
+// verified: a pin READ FROM THAT FILE proves nothing (§AJ #10: any local
+// process could write a self-signed list with its own device on "auto", and
+// the ADR-034 gate was bypassed offline). A key rotation ships as a client
+// release that lists both keys. Self-hosted or development servers add theirs
+// through SHARE2US_TRUST_KEYS.
+var BuiltinTrustKeys = []string{
+	"87be5b415b53731efbc0fd79e79797c055ea9a9474264acf4965f118028a5e44", // api.staging.share2.us (kid d42aae90)
+	// PRODUCTION KEY PENDING: read from GET /v1/lan/trust/key on api.share2.us
+	// once the API build that makes that route public is deployed, then add it
+	// here BEFORE this client ships (until then a prod cache is refused, which
+	// only means prompts instead of auto-accept).
+}
+
+// TrustKeysEnv lists extra accepted server keys, comma-separated hex, for
+// self-hosted and development servers. Setting it is an explicit act by the
+// operator of the machine; it is never read from a file the CLI writes.
+const TrustKeysEnv = "SHARE2US_TRUST_KEYS"
+
+// CurrentAccountID reports the account the saved login belongs to. A cached
+// list is honoured only for THAT account: the server signs lists for every
+// account, so without this binding a list the attacker obtained for their own
+// account (their device on "auto") would verify under the genuine key. The
+// root package wires this at init from the credential file; nil or "" means no
+// cache is ever trusted.
+var CurrentAccountID func() string
+
 var (
 	// ErrTrustKeyChanged means the server presented a different signing key than
 	// the one pinned locally. Refused rather than silently re-pinned; the user
@@ -54,6 +83,48 @@ var (
 
 	signedMu sync.Mutex
 )
+
+// ErrTrustKeyNotPinned means the server's signing key is not one this build
+// knows. A list under an unknown key is never cached and never honoured.
+var ErrTrustKeyNotPinned = errors.New("lanid: server trust-signing key is not one this build accepts (set " + TrustKeysEnv + " for a self-hosted server)")
+
+// trustKeyAllowed reports whether a server public key may verify trust lists.
+func trustKeyAllowed(pubHex string) bool {
+	pubHex = strings.ToLower(strings.TrimSpace(pubHex))
+	if pubHex == "" {
+		return false
+	}
+	for _, k := range BuiltinTrustKeys {
+		if strings.EqualFold(k, pubHex) {
+			return true
+		}
+	}
+	for _, k := range strings.Split(os.Getenv(TrustKeysEnv), ",") {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" && k == pubHex {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyCached is the single read-side check: pinned key, valid signature,
+// unexpired, and issued for the account that is logged in here.
+func verifyCached(f signedTrustFile, now time.Time) (TrustListPayload, error) {
+	if !trustKeyAllowed(f.PublicKey) {
+		return TrustListPayload{}, ErrTrustKeyNotPinned
+	}
+	p, err := VerifyTrustList(f.List, f.PublicKey, now)
+	if err != nil {
+		return TrustListPayload{}, err
+	}
+	if CurrentAccountID == nil {
+		return TrustListPayload{}, errors.New("lanid: no account binding configured")
+	}
+	if acct := CurrentAccountID(); acct == "" || p.AccountID != acct {
+		return TrustListPayload{}, errors.New("lanid: cached trust list is not for the account logged in here")
+	}
+	return p, nil
+}
 
 func signedTrustPath() (string, error) {
 	dir, err := configDir()
@@ -93,6 +164,9 @@ func VerifyTrustList(list SignedTrustList, publicKeyHex string, now time.Time) (
 // SaveSignedTrust verifies a freshly fetched list and caches it. The server key
 // is pinned on the first save; a different key later is refused.
 func SaveSignedTrust(list SignedTrustList, publicKeyHex string) error {
+	if !trustKeyAllowed(publicKeyHex) {
+		return ErrTrustKeyNotPinned
+	}
 	if _, err := VerifyTrustList(list, publicKeyHex, time.Now()); err != nil {
 		return err
 	}
@@ -170,7 +244,7 @@ func cachedDevices(now time.Time) []TrustedDevice {
 	if !ok {
 		return nil
 	}
-	payload, err := VerifyTrustList(f.List, f.PublicKey, now)
+	payload, err := verifyCached(f, now)
 	if err != nil {
 		return nil
 	}
@@ -189,7 +263,7 @@ func TrustCacheStatus() (ok bool, expires time.Time) {
 	if !found {
 		return false, time.Time{}
 	}
-	payload, err := VerifyTrustList(f.List, f.PublicKey, time.Now())
+	payload, err := verifyCached(f, time.Now())
 	if err != nil {
 		return false, time.Time{}
 	}
