@@ -459,7 +459,14 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 	}
 
 	// Receive the stream into a temp file in the destination dir, then rename.
-	_ = conn.SetDeadline(time.Time{})
+	//
+	// The deadline used to be cleared outright, leaving the transfer bounded
+	// only by the 60-second per-frame read deadline inside the loops: a peer
+	// could drip one frame every 59 seconds and hold the receiver's connection
+	// for as long as it liked (§AJ #31). Give the whole transfer a deadline
+	// derived from the size the sender declared, so a real transfer -- even a
+	// slow one -- always finishes inside it and a stalling one does not.
+	_ = conn.SetDeadline(transferDeadline(time.Now(), h.Size))
 	var (
 		written int64
 		sum     string
