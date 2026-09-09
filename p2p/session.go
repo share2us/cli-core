@@ -459,7 +459,10 @@ func (s *webrtcSession) verifyPeer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	mac := sasMAC(secret, channelBinding(localFP, remoteFP))
+	binding := channelBinding(localFP, remoteFP)
+	mine, theirs := sasRoleTags(s.role)
+	mac := sasMAC(secret, binding, mine)
+	expected := sasMAC(secret, binding, theirs)
 	if err := s.dcCtrl.Send(mac); err != nil {
 		return fmt.Errorf("p2p: send verification: %w", err)
 	}
@@ -468,7 +471,7 @@ func (s *webrtcSession) verifyPeer(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case peerMAC := <-s.ctrlRecv:
-		if !hmac.Equal(peerMAC, mac) {
+		if !hmac.Equal(peerMAC, expected) {
 			return errors.New("p2p: peer verification failed — the pairing code did not match, or the connection was tampered with")
 		}
 		return nil
@@ -507,11 +510,31 @@ func channelBinding(a, b string) string {
 	return a + "|" + b
 }
 
+// sasRoleTags returns (this peer's tag, the tag it must see from the other).
+func sasRoleTags(role Role) (string, string) {
+	if role == Sender {
+		return "S", "R"
+	}
+	return "R", "S"
+}
+
 // sasMAC is a 16-byte HMAC-SHA256 over the channel binding, keyed by the secret
-// and domain-separated by a version tag.
-func sasMAC(secret, binding string) []byte {
+// and domain-separated by a version tag AND the sender's role.
+//
+// The role tag is what makes the exchange an actual mutual proof. Without it
+// both peers computed the SAME value and each accepted a MAC equal to its own,
+// so a malicious relay could simply REFLECT each side's message back: both
+// sides would see "their" MAC, both would conclude the peer knew the secret,
+// and the relay would sit in the middle holding plaintext without ever knowing
+// the pairing code. With the tag, the value a peer must receive is one it
+// cannot produce itself, so a reflection fails. lanshare's PAKE confirmation
+// has always done this ("S"/"R"); this is the same construction. Security
+// audit §AJ #9. The version tag is v2 because this changes the wire value.
+func sasMAC(secret, binding, roleTag string) []byte {
 	m := hmac.New(sha256.New, []byte(secret))
-	m.Write([]byte("s2u-sas-v1\x00"))
+	m.Write([]byte("s2u-sas-v2\x00"))
+	m.Write([]byte(roleTag))
+	m.Write([]byte{0})
 	m.Write([]byte(binding))
 	return m.Sum(nil)[:16]
 }
