@@ -29,6 +29,11 @@ const (
 // to a compiled-in value when unset, so an absent section means "all defaults".
 type DaemonConfig struct {
 	// DestDir is where received files land. "" = the platform Downloads dir.
+	//
+	// DEPRECATED (§AG): superseded by Config.Receive.Dir, which every receiver
+	// reads — this one was honoured only by the daemon. Still read as a fallback
+	// so an existing daemon install keeps saving where it always has; setting a
+	// receive dir clears it. See Config.ReceiveSettings.
 	DestDir string `json:"dest_dir,omitempty"`
 	// LANDiscoverable enables the background LAN receiver. nil = default (on).
 	LANDiscoverable *bool `json:"lan_discoverable,omitempty"`
@@ -44,11 +49,16 @@ type DaemonConfig struct {
 // service is installed, not of these values: once running, LAN and notifications
 // default on and approvals default strict.
 func (c Config) DaemonSettings() ResolvedDaemon {
-	d := ResolvedDaemon{DestDir: "", LANDiscoverable: true, Notify: true, ApprovalPolicy: ApprovalPolicyStrict}
+	d := ResolvedDaemon{LANDiscoverable: true, Notify: true, ApprovalPolicy: ApprovalPolicyStrict}
+	// The destination comes from the SHARED resolver, which already prefers
+	// receive.dir over the legacy daemon.dest_dir and falls back to Downloads.
+	// Resolved before the nil-Daemon return below: a config with a receive dir
+	// and no daemon section is the normal case now, and returning early would
+	// have skipped it.
+	d.DestDir = c.ReceiveSettings().Dir
 	if c.Daemon == nil {
 		return d
 	}
-	d.DestDir = c.Daemon.DestDir
 	if c.Daemon.LANDiscoverable != nil {
 		d.LANDiscoverable = *c.Daemon.LANDiscoverable
 	}

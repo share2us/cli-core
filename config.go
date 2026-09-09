@@ -49,6 +49,10 @@ type Config struct {
 	// Daemon holds the optional background service settings (ADR-035). nil means
 	// all defaults; the service is off until installed regardless.
 	Daemon *DaemonConfig `json:"daemon,omitempty"`
+	// Receive is where files sent to this device land, and whether they land
+	// there automatically. Read by `s2u receive`, the desktop tray and the
+	// daemon alike; supersedes Daemon.DestDir (§AG).
+	Receive *ReceiveConfig `json:"receive,omitempty"`
 }
 
 const (
