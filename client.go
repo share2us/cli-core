@@ -1249,4 +1249,3 @@ func (c *Client) LanTrustRevoke(ctx context.Context, fingerprint string) (LanTru
 	err := c.doJSON(ctx, http.MethodDelete, "/v1/lan/trusted/"+fingerprint, nil, &out)
 	return out, err
 }
-

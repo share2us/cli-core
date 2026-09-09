@@ -36,16 +36,71 @@ type PendingResealEntry struct {
 // PendingResealStore maps a share's public id to its retained content key.
 type PendingResealStore map[string]PendingResealEntry
 
+// PendingResealPath sits beside credentials.json, via os.UserConfigDir.
+//
+// It used to build the path from XDG_CONFIG_HOME/HOME directly, which is the
+// bug credentials.go documents: on Windows that is %USERPROFILE%\.config, not
+// %AppData%\Roaming, so this file -- plaintext content keys -- was written to a
+// different, less expected directory than every other piece of CLI state, and
+// was missed by anything that cleaned up the real one (§AJ #23). A file left at
+// the old path is migrated on first use and removed.
 func PendingResealPath() (string, error) {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		base = filepath.Join(home, ".config")
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(base, "share2us", "pending_reseal.json"), nil
+}
+
+// legacyPendingResealPaths lists every place an older build may have left the
+// store: the XDG_CONFIG_HOME-derived path and the bare ~/.config one. On Windows
+// the second is %USERPROFILE%\.config, which is the divergence that mattered;
+// on Linux they differ whenever XDG_CONFIG_HOME is set. The current path is
+// never included.
+func legacyPendingResealPaths() []string {
+	current, _ := PendingResealPath()
+	var out []string
+	add := func(base string) {
+		if base == "" {
+			return
+		}
+		p := filepath.Join(base, "share2us", "pending_reseal.json")
+		if p == current {
+			return
+		}
+		for _, seen := range out {
+			if seen == p {
+				return
+			}
+		}
+		out = append(out, p)
+	}
+	add(os.Getenv("XDG_CONFIG_HOME"))
+	if home, err := os.UserHomeDir(); err == nil {
+		add(filepath.Join(home, ".config"))
+	}
+	return out
+}
+
+// ForgetAllRetainedKeys deletes the whole store. Called at logout: these are
+// plaintext data keys for shares this login sent, and a key that cannot be
+// revoked must not outlive the session that created it (§AJ #23).
+func ForgetAllRetainedKeys() error {
+	var firstErr error
+	current, err := PendingResealPath()
+	if err != nil {
+		firstErr = err
+	}
+	paths := legacyPendingResealPaths()
+	if current != "" {
+		paths = append(paths, current)
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // LoadPendingReseal reads the retained-key store, returning an empty (non-nil) store when the
@@ -57,10 +112,23 @@ func LoadPendingReseal() (PendingResealStore, error) {
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		// Adopt a store left at a pre-fix path, then remove it so the keys exist
+		// in one place only (§AJ #23).
+		adopted := false
+		for _, legacy := range legacyPendingResealPaths() {
+			if data, lerr := os.ReadFile(legacy); lerr == nil {
+				raw = data
+				defer os.Remove(legacy)
+				adopted = true
+				break
+			}
+		}
+		if !adopted {
 			return PendingResealStore{}, nil
 		}
-		return nil, err
 	}
 	var store PendingResealStore
 	if err := json.Unmarshal(raw, &store); err != nil {
@@ -69,7 +137,12 @@ func LoadPendingReseal() (PendingResealStore, error) {
 	if store == nil {
 		store = PendingResealStore{}
 	}
-	store.pruneExpired(time.Now())
+	// Expiry is enforced on READ, so an entry could sit on disk past its TTL
+	// until something happened to load the store. Write the pruned store back so
+	// the key is actually gone from the file, not merely ignored (§AJ #23).
+	if store.pruneExpired(time.Now()) {
+		_ = SavePendingReseal(store)
+	}
 	return store, nil
 }
 
@@ -127,10 +200,15 @@ func ForgetRetainedKey(sharePublicID string) error {
 	return SavePendingReseal(store)
 }
 
-func (s PendingResealStore) pruneExpired(now time.Time) {
+// pruneExpired drops entries past the TTL and reports whether it removed any,
+// so the caller can write the shortened store back to disk (§AJ #23).
+func (s PendingResealStore) pruneExpired(now time.Time) bool {
+	removed := false
 	for id, entry := range s {
 		if now.Sub(entry.CreatedAt) > PendingResealTTL {
 			delete(s, id)
+			removed = true
 		}
 	}
+	return removed
 }
