@@ -59,6 +59,17 @@ func Identity() (ed25519.PrivateKey, error) {
 	return idKey, idErr
 }
 
+// loadOrCreateIdentity reads this device's stable identity, creating it on
+// first use.
+//
+// Three things used to go wrong quietly (§AJ low batch). A write error was
+// discarded, so a device that could not save its key generated a NEW identity
+// on every run -- it appeared as a different device each time, and every peer
+// that had trusted it saw a stranger. The write also went through a plain
+// WriteFile, which follows a symlink someone else planted at that path and
+// truncates whatever is on the other end. And a file that already existed with
+// loose permissions was left that way, because the mode in WriteFile applies
+// only when it creates the file.
 func loadOrCreateIdentity() (ed25519.PrivateKey, error) {
 	dir, err := configDir()
 	if err != nil {
@@ -68,6 +79,10 @@ func loadOrCreateIdentity() (ed25519.PrivateKey, error) {
 	if data, err := os.ReadFile(path); err == nil {
 		var f identityFile
 		if json.Unmarshal(data, &f) == nil && len(f.Priv) == ed25519.PrivateKeySize {
+			// Tighten an existing file that is more readable than it should be.
+			if info, serr := os.Stat(path); serr == nil && info.Mode().Perm() != 0o600 {
+				_ = os.Chmod(path, 0o600)
+			}
 			return ed25519.PrivateKey(f.Priv), nil
 		}
 	}
@@ -75,10 +90,43 @@ func loadOrCreateIdentity() (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if data, merr := json.Marshal(identityFile{Priv: priv}); merr == nil {
-		_ = os.WriteFile(path, data, 0o600)
+	if err := writeIdentity(path, priv); err != nil {
+		// Report it: an identity that cannot be saved is a different device
+		// tomorrow, which silently breaks every trust relationship it has.
+		return nil, fmt.Errorf("lanid: could not save this device's identity to %s: %w", path, err)
 	}
 	return priv, nil
+}
+
+// writeIdentity writes the key through a fresh O_EXCL temp file and renames it
+// into place: the temp cannot be a symlink someone else planted, and the rename
+// is atomic, so a crash never leaves a half-written identity.
+func writeIdentity(path string, priv ed25519.PrivateKey) error {
+	data, err := json.Marshal(identityFile{Priv: priv})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".lan_identity-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // no-op once the rename succeeds
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // Fingerprint / Code identify this device to peers.
