@@ -3,7 +3,25 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
-## v0.33.0 — unreleased
+## v0.34.0 — unreleased
+
+### Security
+
+- **An encrypted file now derives its own key.** The stream format gained a
+  random salt in its header, and the key that actually encrypts the bytes is
+  derived from the share's data key and that salt. Before, every stream used the
+  data key directly and told the chunks apart with four random bytes in the
+  nonce, which was safe only for as long as no data key was ever used to encrypt
+  twice. Nothing did that, but nothing stopped it either, and the failure would
+  not have been graceful: two streams that drew the same four bytes would have
+  produced the same keystream, which gives away both files and the ability to
+  forge. A key can now encrypt as many files as it likes.
+- Files encrypted by older versions still open. The format carries its version,
+  and every version this library has written is still read.
+- **Older versions cannot open files this one writes.** A share encrypted here
+  and downloaded by an older CLI or desktop app reports an unsupported format.
+
+## v0.33.0 — 2026-09-10
 
 The 2026-09-09 security audit, plus the shared pieces of private uploads and the
 one receive setting.
