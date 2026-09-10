@@ -6,9 +6,13 @@ credential storage, end-to-end crypto, QR rendering, local secret scanning,
 device identification and trust, the background-daemon control channel, and the
 offline LAN / P2P transfer stack.
 
-This module is published so the CLI builds from source and so the pieces can be
-reused, but its primary consumer is the CLI. If you just want the tool, start at
-[share2us/cli](https://github.com/share2us/cli).
+This module is published so the clients build from source and so the pieces can
+be reused, but its consumers are the [CLI](https://github.com/share2us/cli) and
+the [desktop app](https://github.com/share2us/gui).
+
+**If you are not writing Go, you are in the wrong place.** To use the tool, start
+at [docs.share2.us](https://docs.share2.us). To install it, the CLI repository has
+the one-liners.
 
 ## Install
 
@@ -24,7 +28,7 @@ go get github.com/share2us/cli-core@latest
 | --- | --- | --- |
 | API client | `client.go`, `core.go` | Talks to the Share2Us API; usage/version strings. |
 | Config & credentials | `config.go`, `credentials.go`, `localshare_config.go` | Base-URL resolution, upload defaults, saved logins. |
-| Crypto | `crypto.go` | End-to-end encryption for device/contact sends. |
+| Crypto | `crypto.go` | End-to-end encryption for device/contact sends, and the framed stream container. See [how it looks from the outside](https://docs.share2.us/guides/encryption/). |
 | QR | `qr.go` | Renders content and share links as terminal QR codes. |
 | Secret scan | `secretscan.go` | Local gitleaks-style scan run before uploads. |
 | Content class | `contentclass.go` | Classifies input (text vs binary, size limits) for QR/live decisions. |
@@ -38,15 +42,25 @@ go get github.com/share2us/cli-core@latest
 
 ## Versioning
 
-The module is tagged (`v0.1.0`, `v0.2.0`, …). Its API tracks what the CLI needs
-rather than promising a stable public surface, so pin a version if you depend on
-it directly.
+The module is tagged, and the tags move often: it tracks what the clients need
+rather than promising a stable public surface. **Pin a version** if you depend on
+it directly, and read the [changelog](CHANGELOG.md) before moving.
+
+Both clients pin the same version deliberately. A change here that only one of
+them picks up is how the two stop behaving identically, which is the single
+property this library exists to guarantee.
+
+One consequence worth knowing about: the encrypted stream format carries a
+version, every version ever written is still readable, and a file written by a
+newer library does **not** open in an older one. Bumping the writer is therefore
+a coordinated release of both clients, not a library detail.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Most user-facing behavior is exercised
-through the [CLI](https://github.com/share2us/cli); changes here should keep it
-building and green.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Most user-facing behaviour is exercised
+through the clients, so a change here should keep both of them building and
+green. Build against them with `GOWORK=off` at least once before opening a pull
+request: the workspace hides a version mismatch that a released build would hit.
 
 ## License
 
