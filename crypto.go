@@ -6,7 +6,9 @@ package clicore
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -21,7 +23,16 @@ import (
 const (
 	EncryptionAlgoAES256GCM = "aes256gcm"
 	chunkSize               = 64 * 1024
-	headerSize              = 18
+	// headerPrefixSize covers magic + major + minor: enough to learn which
+	// format follows, and how many more bytes of header to read.
+	headerPrefixSize = 6
+	// nonceBaseSize is the (1,1) and (1,2) header tail. saltSize is the (1,3) one.
+	nonceBaseSize  = 12
+	saltSize       = 16
+	headerSize     = headerPrefixSize + nonceBaseSize
+	hkdfHeaderSize = headerPrefixSize + saltSize
+	// hkdfInfo domain-separates this derivation from any other use of a data key.
+	hkdfInfo = "share2us/stream/v3"
 	// maxChunkCiphertext caps a single framed chunk so a hostile stream cannot
 	// force a huge allocation. A chunk is at most chunkSize of plaintext plus the
 	// GCM tag; the slack absorbs the tag and any future framing bytes.
@@ -37,7 +48,17 @@ const (
 	// encVersionAEAD (1,2) authenticates end-of-stream: every chunk carries a
 	// final flag bound into the AEAD additional data, so truncation (or any
 	// header/format tampering) fails the tag instead of passing silently.
+	// Still read; no longer written. Its nonce was 4 random bytes followed by
+	// the 8-byte chunk counter, so a stream had only 32 bits of uniqueness and
+	// was safe purely because nothing ever encrypted twice under one data key
+	// -- an invariant the API could not express and a caller could not see.
 	encVersionAEAD = 2
+	// encVersionHKDF (1,3) derives a PER-STREAM key with HKDF from a random
+	// 16-byte salt in the header, so the chunk counter alone owns the nonce and
+	// no two chunks anywhere can share one. Reusing a data key for a second
+	// stream is then merely allowed rather than catastrophic, which is what a
+	// retained content key (re-seal today, replace-in-place later) needs.
+	encVersionHKDF = 3
 )
 
 var (
@@ -168,19 +189,29 @@ func decodeFlexibleBase64(encoded string) ([]byte, error) {
 	return nil, last
 }
 
+// EncryptStream writes the (1,3) format: a random per-stream salt in the header,
+// a stream key derived from it, and a pure counter nonce. The data key may be
+// used for as many streams as the caller likes.
 func EncryptStream(dst io.Writer, src io.Reader, key []byte) error {
-	aead, err := newAEAD(key)
+	if len(key) != 32 {
+		return ErrInvalidKey
+	}
+	salt := make([]byte, saltSize)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+	streamKey, err := deriveStreamKey(key, salt)
 	if err != nil {
 		return err
 	}
-	nonceBase := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonceBase); err != nil {
+	aead, err := newAEAD(streamKey)
+	if err != nil {
 		return err
 	}
-	header := make([]byte, 0, headerSize)
+	header := make([]byte, 0, hkdfHeaderSize)
 	header = append(header, encryptionMagic[:]...)
-	header = append(header, encVersionMajor, encVersionAEAD)
-	header = append(header, nonceBase...)
+	header = append(header, encVersionMajor, encVersionHKDF)
+	header = append(header, salt...)
 	if _, err := dst.Write(header); err != nil {
 		return err
 	}
@@ -196,7 +227,7 @@ func EncryptStream(dst io.Writer, src io.Reader, key []byte) error {
 	for counter := uint64(0); ; counter++ {
 		if eof {
 			// The current chunk is the last one (empty on an empty input).
-			return writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], true)
+			return writeSealedChunk(dst, aead, header, counter, bufs[cur][:n], true)
 		}
 		nxt := 1 - cur
 		n2, eof2, rerr := readChunk(src, bufs[nxt])
@@ -205,9 +236,9 @@ func EncryptStream(dst io.Writer, src io.Reader, key []byte) error {
 		}
 		if eof2 && n2 == 0 {
 			// Nothing follows the current chunk, so it is the final one.
-			return writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], true)
+			return writeSealedChunk(dst, aead, header, counter, bufs[cur][:n], true)
 		}
-		if err := writeSealedChunk(dst, aead, header, nonceBase, counter, bufs[cur][:n], false); err != nil {
+		if err := writeSealedChunk(dst, aead, header, counter, bufs[cur][:n], false); err != nil {
 			return err
 		}
 		cur, n, eof = nxt, n2, eof2
@@ -230,27 +261,57 @@ func readChunk(src io.Reader, buf []byte) (n int, eof bool, err error) {
 	}
 }
 
+// DecryptStream reads any format this package has ever written. The version
+// byte decides how much header follows it and which key the chunks were sealed
+// under, so a ciphertext written years ago still opens.
 func DecryptStream(dst io.Writer, src io.Reader, key []byte) error {
-	aead, err := newAEAD(key)
-	if err != nil {
-		return err
+	if len(key) != 32 {
+		return ErrInvalidKey
 	}
-	header := make([]byte, headerSize)
-	if _, err := io.ReadFull(src, header); err != nil {
+	prefix := make([]byte, headerPrefixSize)
+	if _, err := io.ReadFull(src, prefix); err != nil {
 		return fmt.Errorf("read encrypted header: %w", err)
 	}
-	if string(header[:4]) != string(encryptionMagic[:]) || header[4] != encVersionMajor {
+	if string(prefix[:4]) != string(encryptionMagic[:]) || prefix[4] != encVersionMajor {
 		return errors.New("unsupported encrypted share format")
 	}
-	nonceBase := header[6:]
-	switch header[5] {
-	case encVersionAEAD:
-		return decryptStreamAEAD(dst, src, aead, header, nonceBase)
-	case encVersionLegacy:
+	switch prefix[5] {
+	case encVersionHKDF:
+		salt := make([]byte, saltSize)
+		if _, err := io.ReadFull(src, salt); err != nil {
+			return fmt.Errorf("read encrypted header: %w", err)
+		}
+		streamKey, err := deriveStreamKey(key, salt)
+		if err != nil {
+			return err
+		}
+		aead, err := newAEAD(streamKey)
+		if err != nil {
+			return err
+		}
+		return decryptStreamHKDF(dst, src, aead, append(append([]byte(nil), prefix...), salt...))
+	case encVersionAEAD, encVersionLegacy:
+		nonceBase := make([]byte, nonceBaseSize)
+		if _, err := io.ReadFull(src, nonceBase); err != nil {
+			return fmt.Errorf("read encrypted header: %w", err)
+		}
+		aead, err := newAEAD(key)
+		if err != nil {
+			return err
+		}
+		if prefix[5] == encVersionAEAD {
+			return decryptStreamAEAD(dst, src, aead, append(append([]byte(nil), prefix...), nonceBase...), nonceBase)
+		}
 		return decryptStreamLegacy(dst, src, aead, nonceBase)
 	default:
 		return errors.New("unsupported encrypted share format")
 	}
+}
+
+// decryptStreamHKDF reads the (1,3) framing. It is the (1,2) framing chunk for
+// chunk; only the key and the nonce differ, so the two share a reader.
+func decryptStreamHKDF(dst io.Writer, src io.Reader, aead cipher.AEAD, header []byte) error {
+	return readSealedChunks(dst, src, aead, header, streamNonce)
 }
 
 // decryptStreamAEAD reads the authenticated (1,2) framing. Each chunk is
@@ -259,6 +320,14 @@ func DecryptStream(dst io.Writer, src io.Reader, key []byte) error {
 // without a final chunk (a truncated tail) surfaces as an error rather than a
 // silent short read.
 func decryptStreamAEAD(dst io.Writer, src io.Reader, aead cipher.AEAD, header, nonceBase []byte) error {
+	return readSealedChunks(dst, src, aead, header, func(counter uint64) []byte {
+		return nonceFor(nonceBase, counter)
+	})
+}
+
+// readSealedChunks is the chunk loop shared by (1,2) and (1,3): they differ only
+// in how a counter becomes a nonce.
+func readSealedChunks(dst io.Writer, src io.Reader, aead cipher.AEAD, header []byte, nonce func(uint64) []byte) error {
 	for counter := uint64(0); ; counter++ {
 		var length uint32
 		if err := binary.Read(src, binary.BigEndian, &length); err != nil {
@@ -275,7 +344,7 @@ func decryptStreamAEAD(dst io.Writer, src io.Reader, aead cipher.AEAD, header, n
 		if _, err := io.ReadFull(src, ciphertext); err != nil {
 			return fmt.Errorf("read encrypted chunk: %w", err)
 		}
-		plaintext, err := aead.Open(nil, nonceFor(nonceBase, counter), ciphertext, chunkAAD(header, finalByte[0]))
+		plaintext, err := aead.Open(nil, nonce(counter), ciphertext, chunkAAD(header, finalByte[0]))
 		if err != nil {
 			return fmt.Errorf("decrypt encrypted share: %w", err)
 		}
@@ -349,12 +418,12 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 // writeSealedChunk emits one authenticated chunk: [uint32 len][finalByte][ct].
 // The final flag is carried in the AAD (see chunkAAD), so the end-of-stream
 // signal cannot be forged or moved by anyone without the key.
-func writeSealedChunk(dst io.Writer, aead cipher.AEAD, header, nonceBase []byte, counter uint64, plaintext []byte, final bool) error {
+func writeSealedChunk(dst io.Writer, aead cipher.AEAD, header []byte, counter uint64, plaintext []byte, final bool) error {
 	finalByte := byte(0)
 	if final {
 		finalByte = 1
 	}
-	ciphertext := aead.Seal(nil, nonceFor(nonceBase, counter), plaintext, chunkAAD(header, finalByte))
+	ciphertext := aead.Seal(nil, streamNonce(counter), plaintext, chunkAAD(header, finalByte))
 	if len(ciphertext) > int(^uint32(0)) {
 		return errors.New("encrypted chunk too large")
 	}
@@ -378,10 +447,32 @@ func chunkAAD(header []byte, finalByte byte) []byte {
 	return aad
 }
 
+// nonceFor builds a (1,1)/(1,2) nonce: the header's random base with its last 8
+// bytes replaced by the chunk counter. Read-only now -- see encVersionAEAD for
+// why writing it was retired.
 func nonceFor(base []byte, counter uint64) []byte {
 	nonce := append([]byte(nil), base...)
 	binary.BigEndian.PutUint64(nonce[len(nonce)-8:], counter)
 	return nonce
+}
+
+// streamNonce builds a (1,3) nonce: nothing but the chunk counter. The stream
+// key is already unique to this stream, so the nonce only has to be unique
+// WITHIN it, and a counter is exact where randomness would only be probable.
+func streamNonce(counter uint64) []byte {
+	nonce := make([]byte, nonceBaseSize)
+	binary.BigEndian.PutUint64(nonce[nonceBaseSize-8:], counter)
+	return nonce
+}
+
+// deriveStreamKey turns the share's data key into a key for THIS stream. Two
+// streams under one data key get independent keys, so the counter nonces they
+// both start from zero can never collide.
+func deriveStreamKey(dataKey, salt []byte) ([]byte, error) {
+	if len(dataKey) != 32 {
+		return nil, ErrInvalidKey
+	}
+	return hkdf.Key(sha256.New, dataKey, salt, hkdfInfo, 32)
 }
 
 // SealForDevice anonymously seals arbitrary bytes (e.g. an injected prompt) to a
