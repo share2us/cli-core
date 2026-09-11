@@ -141,9 +141,13 @@ Device shares:
 
 Receiving (files sent to this device):
   receive                     Show what is waiting, and when the oldest expires
-  receive DIR                 Choose which of them to save into DIR
   receive --all               Save everything to your receive folder
-  receive --id ID             Save just that one
+  receive --id ID             Save just that one (ids are listed by receive)
+  receive DIR                 Save into DIR instead of the receive folder, and
+                              pick which files at a prompt. DIR is a FOLDER, so
+                              receive 1 means a folder named 1 and is refused --
+                              use --id to take one file.
+  receive . --id ID           One file, into the current folder
   receive --watch             Keep running and save everything as it arrives
   config set-receive-dir P    Where saved files go (default: your Downloads folder)
   config set-receive-auto on|off

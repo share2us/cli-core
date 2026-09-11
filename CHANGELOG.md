@@ -3,7 +3,16 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
-## v0.34.0 — unreleased
+## v0.35.0 — unreleased
+
+### Changed
+
+- **The receive help now says that the bare argument is a folder.** It reads as a
+  list of alternatives, so `receive 1` looked like "take file 1" when it meant
+  "save into a folder called 1". The folder form is listed after the two ways of
+  choosing a file, and says outright that a number is refused.
+
+## v0.34.0 — 2026-09-10
 
 ### Security
 
