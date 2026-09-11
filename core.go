@@ -147,7 +147,9 @@ Receiving (files sent to this device):
                               pick which files at a prompt. DIR is a FOLDER, so
                               receive 1 means a folder named 1 and is refused --
                               use --id to take one file.
-  receive . --id ID           One file, into the current folder
+  receive .                   The quick way: takes the one waiting file into the
+                              current folder, or asks which if several are
+  receive . --id ID           One named file, into the current folder
   receive --watch             Keep running and save everything as it arrives
   config set-receive-dir P    Where saved files go (default: your Downloads folder)
   config set-receive-auto on|off

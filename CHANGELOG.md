@@ -3,7 +3,15 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
-## v0.35.0 — unreleased
+## v0.36.0 — unreleased
+
+### Changed
+
+- **The receive help leads with the quick way.** `receive .` takes the one file
+  waiting straight into the current folder, and only asks when there is an actual
+  choice to make.
+
+## v0.35.0 — 2026-09-11
 
 ### Changed
 
