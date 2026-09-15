@@ -5,6 +5,17 @@ reaches users only when one of those is released.
 
 ## v0.36.0 — unreleased
 
+### Added
+
+- **This device now tells your account how to recognise it on the local network.**
+  When it registers its key, it also sends the fingerprint of its local-network
+  identity. Your other machines can then tell that a device in your list is the
+  same one they can see on the network in front of them, which is what lets a
+  file go straight across rather than up to the cloud and back down. The
+  fingerprint is derived from a key this device already announces to every peer
+  on that network, so nothing new is revealed by telling your own account about
+  it. Nothing behaves differently yet: the routing that uses it comes next.
+
 ### Changed
 
 - **The receive help leads with the quick way.** `receive .` takes the one file
