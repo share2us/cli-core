@@ -3,7 +3,7 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
-## v0.36.0 — unreleased
+## v0.37.0 — unreleased
 
 ### Added
 
@@ -15,6 +15,15 @@ reaches users only when one of those is released.
   fingerprint is derived from a key this device already announces to every peer
   on that network, so nothing new is revealed by telling your own account about
   it. Nothing behaves differently yet: the routing that uses it comes next.
+- **Working out which of your devices is reachable right now.** Given your device
+  list, the library can now say which of those machines is answering on this
+  network, by matching the identity each one proves it holds. It matches on that
+  proof and never on the device's name, because a name is chosen by the device
+  itself and two machines can pick the same one. A device that is merely signed in
+  does not answer — only one that is actually listening does — so "none of them"
+  is an ordinary answer, and callers fall back to sending through the cloud.
+
+## v0.36.0 — 2026-09-11
 
 ### Changed
 

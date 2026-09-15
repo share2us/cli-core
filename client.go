@@ -331,10 +331,17 @@ type DeviceSession struct {
 	MachineID  string `json:"machine_id"`
 	ClientType string `json:"client_type"`
 	PublicKey  string `json:"public_key"`
-	CreatedAt  string `json:"created_at"`
-	LastUsedAt string `json:"last_used_at"`
-	ExpiresAt  string `json:"expires_at"`
-	Current    bool   `json:"current"`
+	// LanFingerprint is sha256 of this device's LAN identity public key, as
+	// lanshare.IdentityFingerprint emits it. It is what lets a sender recognise
+	// that a device in the account's list is ALSO answering on this network right
+	// now, and hand the file over directly instead of paying to route it through
+	// the cloud. Empty means the device cannot be matched locally: a browser
+	// session, or a client that does not publish one.
+	LanFingerprint string `json:"lan_fingerprint"`
+	CreatedAt      string `json:"created_at"`
+	LastUsedAt     string `json:"last_used_at"`
+	ExpiresAt      string `json:"expires_at"`
+	Current        bool   `json:"current"`
 }
 
 type ListDevicesResponse struct {
