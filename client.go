@@ -449,10 +449,28 @@ func (c *Client) PollDeviceToken(ctx context.Context, deviceCode string) (Device
 	return out, err
 }
 
+// RegisterDeviceKey publishes this device's sealed-box public key, and alongside
+// it the fingerprint of this device's LAN identity.
+//
+// The fingerprint is what lets the account's OTHER devices recognise this one as
+// a peer they can see on the local network, and hand a file over directly rather
+// than paying to route it through the cloud. Without it the two identities -- a
+// server-side device session and a device card discovered over mDNS or a tailnet
+// -- have nothing in common to match on, so "send to my laptop" uploads even when
+// the laptop is in the same room.
+//
+// It is sent from here rather than added to the signature because every caller
+// is this device registering itself with its owner's account, and all of them
+// would pass exactly this value. The fingerprint is sha256 of a public key the
+// device already broadcasts in every device card it presents on that network, so
+// publishing it to its own account discloses nothing new. A device with no LAN
+// identity yet sends nothing, and the server treats a missing fingerprint as
+// "cannot be matched locally" rather than an error.
 func (c *Client) RegisterDeviceKey(ctx context.Context, publicKey string) error {
 	body := struct {
-		PublicKey string `json:"public_key"`
-	}{PublicKey: publicKey}
+		PublicKey      string `json:"public_key"`
+		LanFingerprint string `json:"lan_fingerprint,omitempty"`
+	}{PublicKey: publicKey, LanFingerprint: lanid.Fingerprint()}
 	return c.doJSON(ctx, http.MethodPost, "/v1/auth/devices/key", body, nil)
 }
 
