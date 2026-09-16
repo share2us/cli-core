@@ -11,11 +11,21 @@ import (
 	"time"
 )
 
+// DefaultExpiry is what to send as expires_in when the user did not ask for a
+// duration. EMPTY MEANS "let the server decide", which is the correct answer:
+// the expiry policy is the plan's, the server already holds it
+// (default_expiry_hours), and expiry.Validate applies it when the request names
+// nothing.
+//
+// It used to return "7d". That was a client guessing at a server policy, and on
+// 2026-09-16 the guess became wrong: the Free plan's maximum dropped to 48h, so
+// every default CLI upload was refused with expiry_denied -- the whole free tier
+// broken by a constant in the client. Found by a two-node container test doing an
+// ordinary `s2u <file> --device <name>`.
+//
+// SHARE2US_DEFAULT_EXPIRY still overrides, for anyone who wants a fixed value.
 func DefaultExpiry() string {
-	if value := strings.TrimSpace(os.Getenv("SHARE2US_DEFAULT_EXPIRY")); value != "" {
-		return value
-	}
-	return "7d"
+	return strings.TrimSpace(os.Getenv("SHARE2US_DEFAULT_EXPIRY"))
 }
 
 func ParseDuration(value string) (time.Duration, error) {

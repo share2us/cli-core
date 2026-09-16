@@ -9,6 +9,10 @@ import (
 	"github.com/share2us/cli-core/lanshare"
 )
 
+// noBrowse stands in for mDNS in every test: without it these would listen on
+// the real network, which is both slow and non-deterministic in CI.
+func noBrowse(context.Context, time.Duration) ([]lanshare.Peer, error) { return nil, nil }
+
 func fakeScan(peers []lanshare.ScannedPeer, err error, seen *lanshare.ScanOptions) func(context.Context, lanshare.ScanOptions) ([]lanshare.ScannedPeer, error) {
 	return func(_ context.Context, o lanshare.ScanOptions) ([]lanshare.ScannedPeer, error) {
 		if seen != nil {
@@ -26,7 +30,7 @@ const (
 func TestMatchesADeviceThatIsOnThisNetwork(t *testing.T) {
 	matches, err := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-laptop", LanFingerprint: fpLaptop}},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "192.168.1.9", Port: 7345, IdentityFingerprint: fpLaptop, Name: "laptop"},
 		}, nil, nil)})
 	if err != nil {
@@ -42,7 +46,7 @@ func TestMatchesADeviceThatIsOnThisNetwork(t *testing.T) {
 func TestADeviceThatIsNotHereSimplyDoesNotMatch(t *testing.T) {
 	matches, err := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-laptop", LanFingerprint: fpLaptop}},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "192.168.1.22", IdentityFingerprint: fpDesk},
 		}, nil, nil)})
 	if err != nil {
@@ -59,7 +63,7 @@ func TestADeviceThatIsNotHereSimplyDoesNotMatch(t *testing.T) {
 func TestAMatchingNameIsNotAMatch(t *testing.T) {
 	matches, _ := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-laptop", LanFingerprint: fpLaptop}},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "10.0.0.5", Name: "laptop", IdentityFingerprint: fpDesk},
 		}, nil, nil)})
 	if len(matches) != 0 {
@@ -85,7 +89,7 @@ func TestAPeerWithNoCardNeverMatches(t *testing.T) {
 			{SessionID: "sess-browser", LanFingerprint: ""}, // nothing to match on
 			{SessionID: "sess-laptop", LanFingerprint: fpLaptop},
 		},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "10.0.0.5", Fingerprint: "per-session-cert-fp"}, // no card
 			{Host: "192.168.1.9", IdentityFingerprint: fpLaptop},
 		}, nil, nil)})
@@ -103,7 +107,7 @@ func TestNoMatchableDevicesSkipsTheScanEntirely(t *testing.T) {
 	called := false
 	_, err := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-browser", LanFingerprint: ""}},
-		MatchOptions{scan: func(context.Context, lanshare.ScanOptions) ([]lanshare.ScannedPeer, error) {
+		MatchOptions{browse: noBrowse, scan: func(context.Context, lanshare.ScanOptions) ([]lanshare.ScannedPeer, error) {
 			called = true
 			return nil, nil
 		}})
@@ -120,7 +124,7 @@ func TestNoMatchableDevicesSkipsTheScanEntirely(t *testing.T) {
 func TestAScanFailureYieldsNoMatchesRatherThanBreakingTheSend(t *testing.T) {
 	matches, err := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-laptop", LanFingerprint: fpLaptop}},
-		MatchOptions{scan: fakeScan(nil, errors.New("network unreachable"), nil)})
+		MatchOptions{browse: noBrowse, scan: fakeScan(nil, errors.New("network unreachable"), nil)})
 	if len(matches) != 0 {
 		t.Fatalf("matches = %+v, want none", matches)
 	}
@@ -138,7 +142,7 @@ func TestOnePeerSatisfiesOnlyOneSession(t *testing.T) {
 			{SessionID: "sess-old", LanFingerprint: fpLaptop},
 			{SessionID: "sess-new", LanFingerprint: fpLaptop},
 		},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "192.168.1.9", IdentityFingerprint: fpLaptop},
 		}, nil, nil)})
 	if len(matches) != 1 {
@@ -151,7 +155,7 @@ func TestOnePeerSatisfiesOnlyOneSession(t *testing.T) {
 func TestFingerprintComparisonIgnoresCaseAndSpace(t *testing.T) {
 	matches, _ := MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "sess-laptop", LanFingerprint: "  " + upper(fpLaptop) + " "}},
-		MatchOptions{scan: fakeScan([]lanshare.ScannedPeer{
+		MatchOptions{browse: noBrowse, scan: fakeScan([]lanshare.ScannedPeer{
 			{Host: "192.168.1.9", IdentityFingerprint: fpLaptop},
 		}, nil, nil)})
 	if len(matches) != 1 {
@@ -165,7 +169,7 @@ func TestOptionsReachTheScan(t *testing.T) {
 	var seen lanshare.ScanOptions
 	_, _ = MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "s", LanFingerprint: fpLaptop}},
-		MatchOptions{Timeout: 900 * time.Millisecond, SkipLocalSubnets: true, scan: fakeScan(nil, nil, &seen)})
+		MatchOptions{Timeout: 900 * time.Millisecond, SkipLocalSubnets: true, browse: noBrowse, scan: fakeScan(nil, nil, &seen)})
 	if seen.Timeout != 900*time.Millisecond || !seen.SkipLocalSubnets {
 		t.Fatalf("scan options = %+v, want the caller's timeout and tailnet-only flag", seen)
 	}
@@ -173,7 +177,7 @@ func TestOptionsReachTheScan(t *testing.T) {
 	seen = lanshare.ScanOptions{}
 	_, _ = MatchLocalDevices(t.Context(),
 		[]DeviceRef{{SessionID: "s", LanFingerprint: fpLaptop}},
-		MatchOptions{scan: fakeScan(nil, nil, &seen)})
+		MatchOptions{browse: noBrowse, scan: fakeScan(nil, nil, &seen)})
 	if seen.Timeout != 400*time.Millisecond {
 		t.Fatalf("default timeout = %v, want 400ms", seen.Timeout)
 	}
@@ -187,4 +191,64 @@ func upper(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// mDNS answers are TARGETS, never identity. ADR-038 is explicit that a name off
+// the wire proves nothing, so an announced address still has to be probed and
+// its device card verified before it can match.
+//
+// This is what the two-node container test found missing: Scan only sweeps
+// subnets "small enough" to enumerate, so on a /16 — Docker's default, and
+// plenty of corporate networks — nothing gets probed and a device sitting right
+// there is never seen. `s2u discover` found it via mDNS while a send to the same
+// machine uploaded.
+func TestMDNSAddressesAreProbedAsScanTargets(t *testing.T) {
+	var seen lanshare.ScanOptions
+	_, _ = MatchLocalDevices(t.Context(),
+		[]DeviceRef{{SessionID: "s", LanFingerprint: fpLaptop}},
+		MatchOptions{
+			browse: func(context.Context, time.Duration) ([]lanshare.Peer, error) {
+				return []lanshare.Peer{
+					{Name: "laptop", Host: "172.21.0.2", Port: 4300},
+					{Name: "dup", Host: "172.21.0.2", Port: 4300},
+					{Name: "bad", Host: "not-an-ip", Port: 4300},
+				}, nil
+			},
+			scan: fakeScan(nil, nil, &seen),
+		})
+	if len(seen.Targets) != 1 || seen.Targets[0].String() != "172.21.0.2" {
+		t.Fatalf("scan targets = %v, want exactly the one parseable announced address", seen.Targets)
+	}
+	// Naming targets would otherwise switch the tailnet off, and a tailnet device
+	// is one of the main cases local-first exists for.
+	if seen.IncludeTailscale == nil || !*seen.IncludeTailscale {
+		t.Error("IncludeTailscale not set: naming targets must not drop tailnet peers")
+	}
+}
+
+// mDNS is blocked on plenty of networks — a Windows Public firewall profile,
+// across subnets, every tailnet peer. That must leave the sweep to work alone,
+// not break the send.
+func TestABrowseFailureStillLetsTheScanRun(t *testing.T) {
+	called := false
+	_, err := MatchLocalDevices(t.Context(),
+		[]DeviceRef{{SessionID: "s", LanFingerprint: fpLaptop}},
+		MatchOptions{
+			browse: func(context.Context, time.Duration) ([]lanshare.Peer, error) {
+				return nil, errors.New("mdns blocked")
+			},
+			scan: func(_ context.Context, o lanshare.ScanOptions) ([]lanshare.ScannedPeer, error) {
+				called = true
+				if len(o.Targets) != 0 {
+					t.Errorf("targets = %v, want none when mDNS failed", o.Targets)
+				}
+				return nil, nil
+			},
+		})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !called {
+		t.Fatal("a blocked mDNS stopped the sweep from running at all")
+	}
 }
