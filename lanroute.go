@@ -5,6 +5,7 @@ package clicore
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -53,8 +54,9 @@ type MatchOptions struct {
 	// SkipLocalSubnets probes only tailnet peers. Useful for a cheap pass when a
 	// subnet sweep would be too slow or too noisy for the moment.
 	SkipLocalSubnets bool
-	// scan is swapped in tests. Nil uses lanshare.Scan.
-	scan func(context.Context, lanshare.ScanOptions) ([]lanshare.ScannedPeer, error)
+	// scan and browse are swapped in tests. Nil uses the real ones.
+	scan   func(context.Context, lanshare.ScanOptions) ([]lanshare.ScannedPeer, error)
+	browse func(context.Context, time.Duration) ([]lanshare.Peer, error)
 }
 
 // MatchLocalDevices reports which of devices are reachable directly right now.
@@ -104,10 +106,34 @@ func MatchLocalDevices(ctx context.Context, devices []DeviceRef, opts MatchOptio
 	if scan == nil {
 		scan = lanshare.Scan
 	}
+	browse := opts.browse
+	if browse == nil {
+		browse = lanshare.Browse
+	}
+
+	// SEED THE SCAN WITH WHAT mDNS ALREADY KNOWS.
+	//
+	// A sweep alone is not enough, and the failure is silent. Scan enumerates
+	// local subnets that are "small enough", so on a /16 -- which is what Docker
+	// hands out, and what plenty of corporate networks use -- there is nothing it
+	// can usefully sweep, and a device sitting right there is simply never
+	// probed. Found exactly that way in the two-node container test: `s2u
+	// discover` listed the peer while a send to the same machine uploaded.
+	//
+	// mDNS gives addresses cheaply but NOT identity: ADR-038 is explicit that a
+	// name off the wire proves nothing. So its answers are used only as TARGETS,
+	// and the identity still comes from probing them and verifying the device
+	// card in the certificate. That is the same trick the desktop app uses to
+	// keep tailnet peers visible without sweeping.
+	targets := browseTargets(ctx, browse, mdnsBrowseWindow)
 
 	peers, err := scan(ctx, lanshare.ScanOptions{
 		Timeout:          timeout,
 		SkipLocalSubnets: opts.SkipLocalSubnets,
+		Targets:          targets,
+		// With explicit Targets, Scan would otherwise stop asking about tailnet
+		// peers -- and a tailnet device is one of the main cases this exists for.
+		IncludeTailscale: boolPtr(true),
 	})
 	if err != nil {
 		return nil, err
@@ -141,3 +167,32 @@ func MatchLocalDevices(ctx context.Context, devices []DeviceRef, opts MatchOptio
 func normaliseFingerprint(v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
 }
+
+// mdnsBrowseWindow bounds the announcement listen. Short on purpose: this runs
+// on the send path, and a device that has not announced within it is simply one
+// the sweep has to find instead.
+const mdnsBrowseWindow = 1200 * time.Millisecond
+
+// browseTargets asks mDNS for addresses to probe. Failures are silent by design:
+// mDNS is blocked on plenty of networks -- a Windows Public firewall profile,
+// across subnets, every tailnet peer -- which is the whole reason the device card
+// exists. No answers simply means the sweep is on its own.
+func browseTargets(ctx context.Context, browse func(context.Context, time.Duration) ([]lanshare.Peer, error), window time.Duration) []netip.Addr {
+	peers, err := browse(ctx, window)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[netip.Addr]bool, len(peers))
+	out := make([]netip.Addr, 0, len(peers))
+	for _, p := range peers {
+		addr, perr := netip.ParseAddr(p.Host)
+		if perr != nil || seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		out = append(out, addr)
+	}
+	return out
+}
+
+func boolPtr(v bool) *bool { return &v }

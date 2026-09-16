@@ -3,6 +3,24 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.38.0 — unreleased
+
+### Fixed
+
+- **Uploads stopped working on the free plan, and this is why.** The library
+  guessed a 7-day expiry whenever you did not ask for one. When the free plan's
+  maximum retention became shorter than that, every ordinary upload was refused
+  by the server for asking to keep the file too long. It now asks for nothing and
+  lets the server apply your plan's own default, which is what it should have
+  done from the start.
+- **Finding a device on a big network.** Working out whether one of your machines
+  is on the same network only swept address ranges small enough to walk through,
+  so on a large network — which is what Docker and many offices use — it looked
+  at nothing at all and concluded the device was elsewhere. It now also asks the
+  local network who is announcing themselves and checks those addresses directly.
+  What a device announces is only ever used as a place to look: who it actually
+  is still has to be proven.
+
 ## v0.37.0 — 2026-09-16
 
 ### Added
