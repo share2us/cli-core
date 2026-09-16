@@ -3,7 +3,7 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
-## v0.38.0 — unreleased
+## v0.38.0 — 2026-09-16
 
 ### Fixed
 
