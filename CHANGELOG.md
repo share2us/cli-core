@@ -3,6 +3,17 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.41.0 — 2026-09-25
+
+### Added
+
+- **A stable identity for each agent.** `AgentRegisterInput` and `AgentSessionInfo`
+  carry `AgentID`: the id `s2u agent bind` creates for an agent and keeps in the
+  binding. Session ids change constantly — a new one on every prompt Claude is sent,
+  and on every recreation — so nothing that had to outlive a single prompt could be
+  keyed to them. Invitations into another owner's project will be granted against
+  this id instead.
+
 ## v0.40.0 — 2026-09-25
 
 ### Added
