@@ -51,6 +51,10 @@ type AgentInjectInput struct {
 	SealedFileKey   string `json:"sealed_file_key,omitempty"`
 	// GoalID makes this a counted hop against a goal's budget instead of an ask.
 	GoalID string `json:"goal_id,omitempty"`
+	// The signed envelope; required once the sending device has a signing key.
+	Signature string `json:"signature,omitempty"`
+	IssuedAt  string `json:"issued_at,omitempty"`
+	Nonce     string `json:"nonce,omitempty"`
 }
 
 // AgentInjectResult is the server's response to an inject.
@@ -73,7 +77,16 @@ type AgentRequest struct {
 	// deliberately NOT exposed — download by request id with AgentDownloadContent.
 	HasFile       bool   `json:"has_file"`
 	SealedFileKey string `json:"sealed_file_key"`
+	GoalID        string `json:"goal_id"`
 	CreatedAt     string `json:"created_at"`
+	// The signed envelope (ADR-041 §5). Empty for a hop from a sender that has no
+	// signing key yet. SenderSigningPublicKey is what the SERVER says the sender's
+	// key is — a receiver must trust its own pinned copy over this, and treat a
+	// mismatch as the server lying.
+	Signature              string `json:"signature"`
+	IssuedAt               string `json:"issued_at"`
+	Nonce                  string `json:"nonce"`
+	SenderSigningPublicKey string `json:"sender_signing_public_key"`
 }
 
 // AgentInjectState is a sender's view of a request's progress.
@@ -319,4 +332,10 @@ func (c *Client) SetGoalState(ctx context.Context, id, state string) (Goal, erro
 	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/goals/"+url.PathEscape(id)+"/state",
 		map[string]string{"state": state}, &out)
 	return out, err
+}
+
+// RegisterSigningKey records this device's Ed25519 signing key with the server.
+// Write-once on the server: the same key again is fine, a different key is refused.
+func (c *Client) RegisterSigningKey(ctx context.Context, publicKey string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/agent/signing-key", map[string]string{"public_key": publicKey}, nil)
 }

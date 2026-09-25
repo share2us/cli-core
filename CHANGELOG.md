@@ -3,6 +3,21 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.40.0 — 2026-09-25
+
+### Added
+
+- **Signed agent hops.** `SignHop`, `VerifyHop` and `VerifyHopFresh`, with a
+  per-device Ed25519 signing key (`NewSigningKeyPair`). Until now a prompt sent to
+  an agent was sealed so that only the receiving device could read it, but nothing
+  proved who had written it: anyone who knew a device's public key could seal a
+  prompt to it. A signature lets the server refuse a forged hop before it is
+  queued, and lets the receiving machine refuse one even if the server itself was
+  the forger. The signature covers the sender, target, prompt, the attachment's
+  sealed key, goal, time and a nonce, so a hop cannot be redirected, swapped, moved onto another
+  budget or replayed. The byte format is pinned by a golden test vector that the
+  server asserts too.
+
 ## v0.39.0 — 2026-09-25
 
 ### Added
