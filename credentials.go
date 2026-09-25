@@ -24,6 +24,10 @@ type Credential struct {
 	DeviceSessionID  string `json:"device_session_id,omitempty"`
 	DevicePublicKey  string `json:"device_public_key,omitempty"`
 	DevicePrivateKey string `json:"device_private_key,omitempty"`
+	// The device's Ed25519 SIGNING key (ADR-041 §5), separate from the X25519
+	// encryption key above: one key doing both jobs invites cross-protocol attacks.
+	DeviceSigningPublicKey  string `json:"device_signing_public_key,omitempty"`
+	DeviceSigningPrivateKey string `json:"device_signing_private_key,omitempty"`
 }
 
 // CredentialPath is where the CLI stores its saved login. It mirrors ConfigPath
