@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 // Agent-session bridge client (ADR-036). These wrap the /v1/agent/* endpoints the
@@ -48,6 +49,8 @@ type AgentInjectInput struct {
 	SealedPrompt    string `json:"sealed_prompt"`
 	ObjectKey       string `json:"object_key,omitempty"`
 	SealedFileKey   string `json:"sealed_file_key,omitempty"`
+	// GoalID makes this a counted hop against a goal's budget instead of an ask.
+	GoalID string `json:"goal_id,omitempty"`
 }
 
 // AgentInjectResult is the server's response to an inject.
@@ -230,4 +233,90 @@ func (c *Client) AgentAllowed(ctx context.Context) ([]AgentGrant, error) {
 	}
 	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/allowed", nil, &out)
 	return out.Grants, err
+}
+
+// --- Goals (ADR-041 §4) ---
+
+// Goal is a unit of autonomous work: what is being attempted, how it is known to
+// be finished, and what it may spend. Hops belong to one; an ask does not.
+type Goal struct {
+	ID         string `json:"id"`
+	Project    string `json:"project"`
+	Objective  string `json:"objective"`
+	Acceptance string `json:"acceptance"`
+	Branch     string `json:"branch"`
+	State      string `json:"state"`
+	HopCap     int32  `json:"hop_cap"`
+	// HopsUsed is -1 in a listing: counting per goal would be one query each, so
+	// only the single-goal read carries it.
+	HopsUsed       int64  `json:"hops_used"`
+	ExpiresAt      string `json:"expires_at"`
+	RiskCeiling    int16  `json:"risk_ceiling"`
+	CreatedByAgent string `json:"created_by_agent"`
+	CreatedAt      string `json:"created_at"`
+	Live           bool   `json:"live"`
+	CloseReason    string `json:"close_reason,omitempty"`
+	CloseEvidence  string `json:"close_evidence,omitempty"`
+	ClosedAt       string `json:"closed_at,omitempty"`
+}
+
+// NewGoal opens a goal. Both ceilings are required by the server, deliberately:
+// a goal with no budget is unbounded work, so there is no default to fall back on.
+type NewGoal struct {
+	Project     string `json:"project"`
+	Objective   string `json:"objective"`
+	Acceptance  string `json:"acceptance,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	HopCap      int32  `json:"hop_cap"`
+	TimeCapSecs int64  `json:"time_cap_seconds"`
+	RiskCeiling int16  `json:"risk_ceiling,omitempty"`
+	// CreatedByAgent names the agent session when an agent opens a sub-goal; the
+	// human is taken from the authenticated session, never from here.
+	CreatedByAgent string `json:"created_by_agent,omitempty"`
+}
+
+// CreateGoal opens a goal for this account.
+func (c *Client) CreateGoal(ctx context.Context, in NewGoal) (Goal, error) {
+	var out Goal
+	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/goals", in, &out)
+	return out, err
+}
+
+// ListGoals returns this account's goals, newest first.
+func (c *Client) ListGoals(ctx context.Context, liveOnly bool, limit int) ([]Goal, error) {
+	path := "/v1/agent/goals?limit=" + strconv.Itoa(limit)
+	if liveOnly {
+		path += "&live=true"
+	}
+	var out struct {
+		Goals []Goal `json:"goals"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out.Goals, err
+}
+
+// GetGoal reads one goal, including how much of its budget is spent.
+func (c *Client) GetGoal(ctx context.Context, id string) (Goal, error) {
+	var out Goal
+	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/goals/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
+// CloseGoal ends a goal. Completing one requires evidence — the command that was
+// run and its output — because a completion is a claim about the world; failing
+// and cancelling are outcomes anyone may report.
+func (c *Client) CloseGoal(ctx context.Context, id, state, reason, evidence string) (Goal, error) {
+	body := map[string]string{"state": state, "reason": reason, "evidence": evidence}
+	var out Goal
+	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/goals/"+url.PathEscape(id)+"/close", body, &out)
+	return out, err
+}
+
+// SetGoalState records that a goal is waiting for a human, or running again.
+// Terminal states go through CloseGoal, which demands evidence.
+func (c *Client) SetGoalState(ctx context.Context, id, state string) (Goal, error) {
+	var out Goal
+	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/goals/"+url.PathEscape(id)+"/state",
+		map[string]string{"state": state}, &out)
+	return out, err
 }

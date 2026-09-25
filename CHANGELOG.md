@@ -3,6 +3,18 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.39.0 — 2026-09-25
+
+### Added
+
+- **Goals.** A goal is a unit of autonomous work with a budget: what is being
+  attempted, how it is known to be finished, and what it may spend. `CreateGoal`,
+  `ListGoals`, `GetGoal`, `CloseGoal` and `SetGoalState` wrap the new
+  `/v1/agent/goals` endpoints, and `AgentInjectInput` gained `GoalID`, which turns
+  an injection into a hop counted against that budget instead of a one-off ask.
+  Both ceilings — hops and time — are required when opening a goal, because a
+  goal without one is unbounded work and there is no sensible default for that.
+
 ## v0.38.0 — 2026-09-16
 
 ### Fixed
