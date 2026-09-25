@@ -20,6 +20,7 @@ import (
 
 // AgentSessionInfo is a session in the reachable directory.
 type AgentSessionInfo struct {
+	AgentID         string `json:"agent_id,omitempty"`
 	SessionID       string `json:"session_id"`
 	Tool            string `json:"tool"`
 	Name            string `json:"name"`
@@ -33,6 +34,11 @@ type AgentSessionInfo struct {
 
 // AgentRegisterInput registers/heartbeats one live session.
 type AgentRegisterInput struct {
+	// AgentID is the stable identity of the agent behind this session (ADR-041
+	// §1a): created by `s2u agent bind`, kept in the binding, and unchanged across
+	// the session forks and recreations that rotate SessionID. Invitations into
+	// another owner's project are granted against it, not against a session.
+	AgentID   string `json:"agent_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Tool      string `json:"tool"`
 	Name      string `json:"name"`
