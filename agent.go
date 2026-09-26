@@ -57,10 +57,16 @@ type AgentInjectInput struct {
 	SealedFileKey   string `json:"sealed_file_key,omitempty"`
 	// GoalID makes this a counted hop against a goal's budget instead of an ask.
 	GoalID string `json:"goal_id,omitempty"`
-	// The signed envelope; required once the sending device has a signing key.
+	// The signed envelope; required on every hop (ADR-041 §5).
 	Signature string `json:"signature,omitempty"`
 	IssuedAt  string `json:"issued_at,omitempty"`
 	Nonce     string `json:"nonce,omitempty"`
+	// ProjectID and SenderAgentID let a hop reach an agent in ANOTHER account
+	// (ADR-041 §2a): both agents must be accepted members of this project, and
+	// the sending agent must run on this device. SenderAgentID alone also lets a
+	// same-account hop spend a project goal owned by another account.
+	ProjectID     string `json:"project_id,omitempty"`
+	SenderAgentID string `json:"sender_agent_id,omitempty"`
 }
 
 // AgentInjectResult is the server's response to an inject.
