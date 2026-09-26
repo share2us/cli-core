@@ -80,3 +80,20 @@ func (c *Client) DeclineAgentInvite(ctx context.Context, id string) error {
 func (c *Client) WithdrawAgent(ctx context.Context, projectID, membershipID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/projects/"+url.PathEscape(projectID)+"/agents/"+url.PathEscape(membershipID), nil, nil)
 }
+
+// AgentJoinResult is what redeeming a join code did (phase-7 §10).
+type AgentJoinResult struct {
+	// Status is "pending" (a host must approve in the portal) or "admitted".
+	Status       string `json:"status"`
+	RequestID    string `json:"request_id,omitempty"`
+	ProjectName  string `json:"project_name"`
+	SharenetName string `json:"sharenet_name"`
+}
+
+// AgentJoin redeems a join code for the agent agentID, which must be registered
+// on this device. It files a join request that a host approves in the portal.
+func (c *Client) AgentJoin(ctx context.Context, code, agentID string) (AgentJoinResult, error) {
+	var out AgentJoinResult
+	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/join", map[string]string{"code": code, "agent_id": agentID}, &out)
+	return out, err
+}
