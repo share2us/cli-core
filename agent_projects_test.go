@@ -77,3 +77,22 @@ func TestInjectInputOmitsEmptyProjectFields(t *testing.T) {
 		t.Fatalf("empty sender_agent_id serialized: %s", raw)
 	}
 }
+
+func TestAgentJoin(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/agent/join" {
+			t.Errorf("call %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "pending", "project_name": "Checkout", "sharenet_name": "Team"})
+	}))
+	defer srv.Close()
+	res, err := NewClient(srv.URL, "s2s_devtoken").AgentJoin(context.Background(), "S2U-AAAA-BBBB-CCCC", "agt_x")
+	if err != nil || res.Status != "pending" || res.ProjectName != "Checkout" {
+		t.Fatalf("AgentJoin = %+v, %v", res, err)
+	}
+	if got["code"] != "S2U-AAAA-BBBB-CCCC" || got["agent_id"] != "agt_x" {
+		t.Fatalf("body = %v", got)
+	}
+}
