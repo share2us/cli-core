@@ -122,6 +122,18 @@ func (c *Client) ListAgentSessions(ctx context.Context) ([]AgentSessionInfo, err
 	return out.Sessions, err
 }
 
+// ListAgentSessionsIncludingOffline is ListAgentSessions plus sessions seen in
+// the last day that have stopped heartbeating, with Status "offline". It is for
+// explaining a failed lookup ("offline since ..."); an offline session is not a
+// target. A server that predates this returns only the reachable sessions.
+func (c *Client) ListAgentSessionsIncludingOffline(ctx context.Context) ([]AgentSessionInfo, error) {
+	var out struct {
+		Sessions []AgentSessionInfo `json:"sessions"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/sessions?include_offline=1", nil, &out)
+	return out.Sessions, err
+}
+
 // DeregisterAgentSession removes a session the daemon no longer advertises.
 func (c *Client) DeregisterAgentSession(ctx context.Context, sessionID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/agent/sessions?session_id="+url.QueryEscape(sessionID), nil, nil)

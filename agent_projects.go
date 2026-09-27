@@ -40,6 +40,17 @@ func (c *Client) ListProjectAgents(ctx context.Context, projectID string) ([]Pro
 	return out.Agents, err
 }
 
+// ListProjectAgentsIncludingOffline is ListProjectAgents plus member agents seen
+// in the last day that have stopped heartbeating, with Status "offline" (see
+// ListAgentSessionsIncludingOffline).
+func (c *Client) ListProjectAgentsIncludingOffline(ctx context.Context, projectID string) ([]ProjectAgentAddress, error) {
+	var out struct {
+		Agents []ProjectAgentAddress `json:"agents"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/projects/"+url.PathEscape(projectID)+"/agents?include_offline=1", nil, &out)
+	return out.Agents, err
+}
+
 // AgentInvite is an invitation for one of this account's agents to join a
 // project, or (Pending false) a membership it already holds.
 type AgentInvite struct {
