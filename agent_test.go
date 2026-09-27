@@ -62,3 +62,31 @@ func TestAgentClientRoundTrips(t *testing.T) {
 		t.Fatalf("longpoll = %+v err=%v", reqs, err)
 	}
 }
+
+func TestListingsIncludingOfflineAskForThem(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/agent/sessions":
+			_, _ = w.Write([]byte(`{"sessions":[{"session_id":"s1","status":"offline","last_seen":"2026-09-27T10:00:00Z"}]}`))
+		default:
+			_, _ = w.Write([]byte(`{"agents":[{"agent_id":"agt_x","session_id":"s2","status":"offline"}]}`))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "s2s_devtoken")
+	s, err := c.ListAgentSessionsIncludingOffline(context.Background())
+	if err != nil || len(s) != 1 || s[0].Status != "offline" || s[0].LastSeen == "" {
+		t.Fatalf("sessions: %+v, %v", s, err)
+	}
+	a, err := c.ListProjectAgentsIncludingOffline(context.Background(), "p 1")
+	if err != nil || len(a) != 1 || a[0].Status != "offline" {
+		t.Fatalf("agents: %+v, %v", a, err)
+	}
+	want := []string{"/v1/agent/sessions?include_offline=1", "/v1/agent/projects/p 1/agents?include_offline=1"}
+	if len(queries) != 2 || queries[0] != want[0] || queries[1] != want[1] {
+		t.Fatalf("requests %q, want %q", queries, want)
+	}
+}

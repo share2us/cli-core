@@ -3,6 +3,16 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.44.0 — 2026-09-27
+
+### Added
+
+- `Client.ListAgentSessionsIncludingOffline` and
+  `Client.ListProjectAgentsIncludingOffline`: the directories plus sessions seen
+  in the last day that stopped heartbeating, with status `offline`, so a sender
+  can say an agent is offline instead of that it does not exist. A server that
+  predates `include_offline` returns only reachable sessions.
+
 ## v0.41.0 — 2026-09-25
 
 ### Added
