@@ -67,6 +67,9 @@ type AgentInjectInput struct {
 	// same-account hop spend a project goal owned by another account.
 	ProjectID     string `json:"project_id,omitempty"`
 	SenderAgentID string `json:"sender_agent_id,omitempty"`
+	// TargetAgentID is the agent the sender means to reach (signed, v2). The
+	// server refuses the hop if the target session is not that agent.
+	TargetAgentID string `json:"target_agent_id,omitempty"`
 }
 
 // AgentInjectResult is the server's response to an inject.
@@ -99,6 +102,11 @@ type AgentRequest struct {
 	IssuedAt               string `json:"issued_at"`
 	Nonce                  string `json:"nonce"`
 	SenderSigningPublicKey string `json:"sender_signing_public_key"`
+	// The signed project and agents (v2), which the receiver verifies with the
+	// rest of the claims. Empty for a hop that names none.
+	ProjectID     string `json:"project_id,omitempty"`
+	SenderAgentID string `json:"sender_agent_id,omitempty"`
+	TargetAgentID string `json:"target_agent_id,omitempty"`
 }
 
 // AgentInjectState is a sender's view of a request's progress.

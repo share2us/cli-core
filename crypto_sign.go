@@ -37,7 +37,9 @@ import (
 // hopSigningDomain separates a hop signature from any other signature the same
 // key might ever produce. A signature is only ever valid for the purpose it was
 // made for.
-const hopSigningDomain = "share2us/agent-hop/v1"
+// v2 (2026-09-29) adds the project and both agents to the signed fields; the new
+// tag means a v1 signature can never verify as v2, and v1 is not accepted at all.
+const hopSigningDomain = "share2us/agent-hop/v2"
 
 // ErrHopSignature covers every way a hop signature can fail: wrong key, altered
 // field, malformed signature. Callers should not distinguish them to a remote
@@ -78,6 +80,9 @@ func NewSigningKeyPair() (SigningKeyPair, error) {
 //   - the sealed prompt, and the attachment's sealed content key (so neither can
 //     be swapped — see below for why the key rather than the object);
 //   - the goal it is counted against (so it cannot be moved onto another budget);
+//   - the project it is sent in, the sending agent and the target agent (v2), so a
+//     server cannot relabel which project a hop belongs to or which of a device's
+//     agents sent it;
 //   - when it was issued and a nonce (so it cannot be replayed, Q121).
 //
 // The attachment is bound by its SEALED CONTENT KEY, not by its storage object
@@ -97,6 +102,10 @@ type HopClaims struct {
 	GoalID          string
 	IssuedAt        time.Time
 	Nonce           string
+	// v2: empty for a hop that names no project / no agent.
+	ProjectID     string
+	SenderAgentID string
+	TargetAgentID string
 }
 
 // SigningBytes is the exact byte string a hop signature covers.
@@ -117,6 +126,9 @@ func (c HopClaims) SigningBytes() []byte {
 		c.GoalID,
 		fmt.Sprintf("%d", c.IssuedAt.Unix()),
 		c.Nonce,
+		c.ProjectID,
+		c.SenderAgentID,
+		c.TargetAgentID,
 	}
 	size := 4 + len(hopSigningDomain)
 	for _, f := range fields {
