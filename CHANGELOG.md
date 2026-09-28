@@ -3,6 +3,16 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.45.0 — 2026-09-29
+
+### Changed (breaking)
+
+- **Hop signing format v2.** `HopClaims` gains `ProjectID`, `SenderAgentID` and
+  `TargetAgentID`, all signed, under the new domain tag `share2us/agent-hop/v2`. A v1
+  signature never verifies as v2, and v1 is not accepted: a server or receiver on
+  v0.45.0 refuses hops from older senders. `AgentInjectInput` gains `TargetAgentID`;
+  `AgentRequest` carries the three signed fields to the receiver.
+
 ## v0.44.0 — 2026-09-27
 
 ### Added
