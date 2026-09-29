@@ -195,6 +195,17 @@ func (c *Client) AgentReportResult(ctx context.Context, id, status, result strin
 		map[string]string{"status": status, "result": result}, nil)
 }
 
+// AgentRequeueWaiting asks the server to put this device's "waiting" hops (held
+// for an open window before a restart) back in the queue, so the next long-poll
+// delivers them again. It returns how many came back.
+func (c *Client) AgentRequeueWaiting(ctx context.Context) (int, error) {
+	var out struct {
+		Requeued int `json:"requeued"`
+	}
+	err := c.doJSON(ctx, http.MethodPost, "/v1/agent/requeue-waiting", nil, &out)
+	return out.Requeued, err
+}
+
 // AgentUploadContent uploads a ciphertext blob (an encrypted file for an inject)
 // and returns its object key, to pass as AgentInjectInput.ObjectKey.
 func (c *Client) AgentUploadContent(ctx context.Context, ciphertext []byte) (string, error) {
