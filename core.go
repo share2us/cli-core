@@ -66,7 +66,7 @@ Usage:
   %s untrust|unblock <email>
   %s incoming [approve|reject <id>]
   %s devices
-  %s <file> [--expires DUR] [--name NAME] [--password] [--one-time] [--encrypt] [--device ALIAS] [--contact EMAIL] [--email EMAIL] [--to EMAIL] [--private] [--max-views N] [--allow-domain DOMAIN] [--deny-domain DOMAIN] [--restrict|--unrestrict] [--new|--fresh] [-l|--live] [-w|--watch] [--allow-secrets|--no-scan] [--qr|--qrl] [--json]
+  %s <file> [--expires DUR] [--name NAME] [--password] [--one-time] [--encrypt] [--device ALIAS] [--contact EMAIL] [--email EMAIL] [--to EMAIL] [--private] [--sharenet ID|--project ID] [--max-views N] [--allow-domain DOMAIN] [--deny-domain DOMAIN] [--restrict|--unrestrict] [--new|--fresh] [-l|--live] [-w|--watch] [--allow-secrets|--no-scan] [--qr|--qrl] [--json]
   %s get|-g <url-with-#k> [--key KEY] [--output PATH]
   %s pull <url-or-public-id> [--output PATH]
   %s pull --all [--output DIR]
@@ -124,6 +124,16 @@ Private files (no link shared with anyone):
                               the share, and passing its URL back to this command gets the
                               file on any device you are signed in on. Composes with
                               --expires / --password / --keep.
+
+Sharenet files (for the members, not a link):
+  --sharenet ID               Post the file into a sharenet: its members find it under
+                              Files in the portal. It counts toward the sharenet owner's
+                              storage and stays until someone deletes it.
+  --project ID                The same, into one of the sharenet's projects.
+                              Link options (--password, --one-time, --to, --private and
+                              the like) are refused with these, and your standing
+                              defaults for encryption, view limits and domains are not
+                              applied.
 
 Email shares:
   --email EMAIL               Share with a recipient email; repeat or comma-separate.
