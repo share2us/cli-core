@@ -31,6 +31,9 @@ var ErrAlreadyRunning = errors.New("another share2us daemon is already running")
 type Request struct {
 	Token string `json:"token"`
 	Op    string `json:"op"`
+	// Args carries an op's parameters (the agent channel ops: a session id, a
+	// request id, a result).
+	Args map[string]string `json:"args,omitempty"`
 }
 
 // Response is the reply to a Request.
@@ -42,6 +45,8 @@ type Response struct {
 	OwnsInbox bool   `json:"owns_inbox,omitempty"`
 	Since     string `json:"since,omitempty"`
 	Err       string `json:"err,omitempty"`
+	// Data carries an op's structured answer (the agent channel's deliveries).
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // dialTimeout bounds a control round-trip. The GUI's owns-receiver probe must be
@@ -188,6 +193,25 @@ func Query(op string) (Response, bool) {
 		return Response{}, false
 	}
 	resp, err := dial(endpoint, tok, Request{Op: op})
+	if err != nil {
+		return Response{}, false
+	}
+	return resp, true
+}
+
+// Call sends a full control request (op and args) to a running daemon. It
+// returns (Response, true) when a daemon answered, (_, false) when none is
+// reachable.
+func Call(req Request) (Response, bool) {
+	endpoint, err := controlEndpoint()
+	if err != nil {
+		return Response{}, false
+	}
+	tok, err := LoadOrCreateToken()
+	if err != nil {
+		return Response{}, false
+	}
+	resp, err := dial(endpoint, tok, req)
 	if err != nil {
 		return Response{}, false
 	}
