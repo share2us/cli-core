@@ -3,6 +3,13 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## v0.46.0 — 2026-09-29
+
+### Added
+
+- `UploadCreateRequest.SharenetID` / `ProjectID`: post a file into a sharenet or one
+  of its projects.
+
 ## v0.45.0 — 2026-09-29
 
 ### Changed (breaking)

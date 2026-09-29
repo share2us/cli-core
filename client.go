@@ -181,6 +181,11 @@ type UploadCreateRequest struct {
 	// Note is a short message the sharer attaches, shown to viewers on the share
 	// page.
 	Note string `json:"note,omitempty"`
+	// Post into a sharenet, or into one of its projects (server decisions-summary
+	// 9.23 #8): stored under the sharenet owner's account, members only, kept until
+	// deleted. Encryption, recipients, passwords and live updates do not apply.
+	SharenetID string `json:"sharenet_id,omitempty"`
+	ProjectID  string `json:"project_id,omitempty"`
 }
 
 type UploadTarget struct {
