@@ -3,6 +3,14 @@
 This library is consumed by the Share2Us CLI and desktop app. A version here
 reaches users only when one of those is released.
 
+## [Unreleased]
+
+### Added
+
+- The local daemon control server now receives the connected process's
+  kernel-attested PID on Linux, macOS and Windows. Clients can bind sensitive
+  requests to a live process instead of trusting caller-supplied session IDs.
+
 ## v0.46.0 — 2026-09-29
 
 ### Added
