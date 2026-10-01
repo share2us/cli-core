@@ -34,6 +34,9 @@ type Request struct {
 	// Args carries an op's parameters (the agent channel ops: a session id, a
 	// request id, a result).
 	Args map[string]string `json:"args,omitempty"`
+	// PeerPID is set by the server from the connected Unix socket or Windows
+	// named pipe. It is never accepted from JSON supplied by the caller.
+	PeerPID int `json:"-"`
 }
 
 // Response is the reply to a Request.
@@ -52,6 +55,20 @@ type Response struct {
 // dialTimeout bounds a control round-trip. The GUI's owns-receiver probe must be
 // cheap and never hang the tray startup, so keep this short.
 const dialTimeout = 400 * time.Millisecond
+
+// A first channel request may need the daemon to discover Claude's live
+// process before it can bind the connected peer to that session. Keep the
+// ordinary GUI/status probe cheap; only these session-bound ops wait longer.
+const channelCallTimeout = 12 * time.Second
+
+func requestTimeout(op string) time.Duration {
+	switch op {
+	case "channel-poll", "channel-report", "channel-turn-ended", "channel-abandon-typed", "channel-guard-ready":
+		return channelCallTimeout
+	default:
+		return dialTimeout
+	}
+}
 
 // LoadOrCreateToken returns the per-user control token, creating it (32 random
 // bytes, hex, 0600) on first use. The token authenticates control requests so no
@@ -140,6 +157,11 @@ func (s *controlServer) handle(conn net.Conn) {
 		writeResp(conn, Response{Err: "unauthorized"})
 		return
 	}
+	// The token authenticates the user; the peer PID lets callers of sensitive
+	// channel operations prove which agent process invoked them. Zero means the
+	// platform could not attest it, so those operations must fail closed.
+	req.PeerPID, _ = peerProcessID(conn)
+	_ = conn.SetDeadline(time.Now().Add(requestTimeout(req.Op)))
 	writeResp(conn, s.handler(req))
 }
 
@@ -159,12 +181,13 @@ func writeResp(w io.Writer, r Response) {
 // dial sends one authenticated request and returns the response.
 func dial(endpoint, token string, req Request) (Response, error) {
 	req.Token = token
-	conn, err := dialControl(endpoint, dialTimeout)
+	timeout := requestTimeout(req.Op)
+	conn, err := dialControl(endpoint, timeout)
 	if err != nil {
 		return Response{}, err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+	_ = conn.SetDeadline(time.Now().Add(timeout))
 	b, _ := json.Marshal(req)
 	if _, err := conn.Write(append(b, '\n')); err != nil {
 		return Response{}, err
