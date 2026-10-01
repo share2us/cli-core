@@ -5,6 +5,8 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.50.0 — 2026-10-01
+
 ### Added
 
 - The local daemon control server now receives the connected process's
