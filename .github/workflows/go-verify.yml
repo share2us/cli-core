@@ -18,11 +18,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Full suite
-        run: go test ./...
-      - name: Race suite
+      - name: Transport peer-PID test
+        run: go test ./daemonctl -run '^TestPeerPIDComesFromTransportNotRequest$' -count=1
+      - name: Transport peer-PID race test
         if: always()
-        run: go test -race ./...
+        run: go test -race ./daemonctl -run '^TestPeerPIDComesFromTransportNotRequest$' -count=1
+      - name: Full suite (Linux baseline)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test ./... && go test -race ./...
       - name: Vet
         if: always()
         run: go vet ./...
