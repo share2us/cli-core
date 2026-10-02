@@ -25,17 +25,24 @@ const (
 // can find it by name (`--dest <name>`). The TXT record carries the cert
 // fingerprint and mode, but never the passphrase — password-mode receivers are
 // still discovered, but the sender must supply the password out-of-band.
+// receiverTXT is the mDNS TXT for a receive advert. The stable identity
+// fingerprint lets a peer that knows this device by its identity (not its
+// per-session cert) find it: the agent-file sender matches the target's
+// directory fingerprint to the "id" key, then pins "f" for the TLS connection.
+func receiverTXT(info ListenInfo) []string {
+	txt := []string{"v=1", "f=" + info.Fingerprint, "mode=" + info.Mode}
+	if info.IdentityFingerprint != "" {
+		txt = append(txt, "id="+info.IdentityFingerprint)
+	}
+	return txt
+}
+
 func Advertise(instance string, info ListenInfo) (io.Closer, error) {
 	instance = strings.TrimSpace(instance)
 	if instance == "" {
 		instance = "share2us"
 	}
-	txt := []string{
-		"v=1",
-		"f=" + info.Fingerprint,
-		"mode=" + info.Mode,
-	}
-	server, err := zeroconf.Register(instance, mdnsService, mdnsDomain, info.Port, txt, nil)
+	server, err := zeroconf.Register(instance, mdnsService, mdnsDomain, info.Port, receiverTXT(info), nil)
 	if err != nil {
 		return nil, fmt.Errorf("lanshare: mdns register: %w", err)
 	}
@@ -120,10 +127,14 @@ type Peer struct {
 	Host        string // reachable IP
 	Port        int
 	Fingerprint string // cert SHA-256 (for pinning); "" if not advertised
-	Mode        string // ModePassword | ModeAllowIP | ModeOpen
-	IsBroadcast bool   // true when this advert is an offered file (pull)
-	FileName    string // broadcast: offered file name
-	FileSize    int64  // broadcast: offered file size
+	// IdentityFingerprint is the device's STABLE lanid fingerprint, advertised as
+	// the "id" TXT key; "" if not advertised. Match this to a directory entry to
+	// find a specific device; pin Fingerprint for the TLS connection.
+	IdentityFingerprint string
+	Mode                string // ModePassword | ModeAllowIP | ModeOpen
+	IsBroadcast         bool   // true when this advert is an offered file (pull)
+	FileName            string // broadcast: offered file name
+	FileSize            int64  // broadcast: offered file size
 }
 
 // Addr returns host:port.
@@ -183,14 +194,15 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 				}
 			}
 			seen[key] = Peer{
-				Name:        name,
-				Host:        host,
-				Port:        e.Port,
-				Fingerprint: fp,
-				Mode:        txtValue(e.Text, "mode"),
-				IsBroadcast: txtValue(e.Text, "bc") == "1",
-				FileName:    SanitizeName(txtValue(e.Text, "fn")),
-				FileSize:    fsize,
+				Name:                name,
+				Host:                host,
+				Port:                e.Port,
+				Fingerprint:         fp,
+				IdentityFingerprint: txtValue(e.Text, "id"),
+				Mode:                txtValue(e.Text, "mode"),
+				IsBroadcast:         txtValue(e.Text, "bc") == "1",
+				FileName:            SanitizeName(txtValue(e.Text, "fn")),
+				FileSize:            fsize,
 			}
 		}
 		close(done)
