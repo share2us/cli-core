@@ -196,6 +196,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 			}
 			seen[key] = Peer{
 				Name:                name,
+				Instance:            e.Instance,
 				Host:                host,
 				Port:                e.Port,
 				Fingerprint:         fp,
