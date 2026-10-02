@@ -124,6 +124,7 @@ func Discover(ctx context.Context, name string, timeout time.Duration) (PairingI
 // download).
 type Peer struct {
 	Name        string // device display name
+	Instance    string // raw mDNS instance name (unsanitized), for exact matching
 	Host        string // reachable IP
 	Port        int
 	Fingerprint string // cert SHA-256 (for pinning); "" if not advertised
