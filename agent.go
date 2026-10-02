@@ -29,6 +29,7 @@ type AgentSessionInfo struct {
 	DeviceID        string `json:"device_id"`
 	DeviceName      string `json:"device_name"`
 	DevicePublicKey string `json:"device_public_key"`
+	LANFingerprint  string `json:"lan_fingerprint"`
 	LastSeen        string `json:"last_seen"`
 }
 
@@ -44,6 +45,10 @@ type AgentRegisterInput struct {
 	Name      string `json:"name"`
 	Project   string `json:"project"`
 	Status    string `json:"status"`
+	// LANFingerprint is this device's lanid fingerprint (64 hex, or empty), so a
+	// sender can find and pin this device's agent-file receiver for a direct LAN
+	// transfer. Returned in the directory as AgentSessionInfo.LANFingerprint.
+	LANFingerprint string `json:"lan_fingerprint,omitempty"`
 }
 
 // AgentInjectInput submits a file+prompt for a target session. SealedPrompt (and
