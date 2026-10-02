@@ -59,7 +59,10 @@ type AgentInjectInput struct {
 	Tool            string `json:"tool"`
 	SealedPrompt    string `json:"sealed_prompt"`
 	ObjectKey       string `json:"object_key,omitempty"`
-	SealedFileKey   string `json:"sealed_file_key,omitempty"`
+	// LANFile marks a file that was staged directly over LAN (no relay object).
+	// The server then derives has_file from the signed sealed key, not an object.
+	LANFile       bool   `json:"lan_file,omitempty"`
+	SealedFileKey string `json:"sealed_file_key,omitempty"`
 	// GoalID makes this a counted hop against a goal's budget instead of an ask.
 	GoalID string `json:"goal_id,omitempty"`
 	// The signed envelope; required on every hop (ADR-041 §5).
