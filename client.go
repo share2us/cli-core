@@ -111,11 +111,12 @@ type DeviceCodeResponse struct {
 }
 
 type DeviceCodeRequest struct {
-	DeviceName    string `json:"device_name,omitempty"`
-	MachineID     string `json:"machine_id,omitempty"`
-	OS            string `json:"os,omitempty"`
-	Arch          string `json:"arch,omitempty"`
-	ClientVersion string `json:"client_version,omitempty"`
+	SigningPublicKey string `json:"signing_public_key,omitempty"`
+	DeviceName       string `json:"device_name,omitempty"`
+	MachineID        string `json:"machine_id,omitempty"`
+	OS               string `json:"os,omitempty"`
+	Arch             string `json:"arch,omitempty"`
+	ClientVersion    string `json:"client_version,omitempty"`
 }
 
 type DeviceTokenResponse struct {

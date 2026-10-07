@@ -20,6 +20,8 @@ jobs:
           cache: true
       - name: Transport peer-PID test
         run: go test ./daemonctl -run '^TestPeerPIDComesFromTransportNotRequest$' -count=1
+      - name: Login signing identity regressions
+        run: go test -race . -run '^(TestPrepareLoginSigningKey|TestClientDeviceFlow)' -count=1
       - name: Transport peer-PID race test
         if: always()
         run: go test -race ./daemonctl -run '^TestPeerPIDComesFromTransportNotRequest$' -count=1

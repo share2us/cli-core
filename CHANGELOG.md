@@ -5,6 +5,12 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Added
+
+- Login signing-key preparation for ADR-045: persist/reuse the Ed25519 pair
+  before approval and include `signing_public_key` in device-code requests.
+  Recover a missing private key without discarding tokens or encryption keys.
+
 ## v0.57.0 — 2026-10-07
 
 ### Added
