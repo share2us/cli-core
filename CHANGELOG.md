@@ -5,6 +5,17 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.57.0 — 2026-10-07
+
+### Added
+
+- Per-agent local presentation preferences in `Config.Agents` (`AgentPrefs`:
+  alias, pinned, hidden), keyed by the stable AgentID and shared by the CLI and
+  the desktop app. Helpers: `Config.AgentPref`, `Config.SetAgentPref` (prunes
+  empty entries), `Config.AgentDisplayName` (alias overrides the server name),
+  and `UpdateAgentPref` (load/mutate/save). Local to the machine; never leaves
+  the device and never changes what anyone else sees.
+
 ## v0.50.0 — 2026-10-01
 
 ### Added
