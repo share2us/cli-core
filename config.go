@@ -53,6 +53,10 @@ type Config struct {
 	// there automatically. Read by `s2u receive`, the desktop tray and the
 	// daemon alike; supersedes Daemon.DestDir (§AG).
 	Receive *ReceiveConfig `json:"receive,omitempty"`
+	// Agents holds per-agent local presentation preferences (alias, pin, hide),
+	// keyed by the stable AgentID. Local to this machine and shared by the CLI
+	// and the desktop app. See AgentPrefs.
+	Agents map[string]AgentPrefs `json:"agents,omitempty"`
 }
 
 const (
