@@ -509,16 +509,17 @@ func TestClientDeviceFlowPendingThenApproved(t *testing.T) {
 	client := NewClient("https://api.example.test", "")
 	client.HTTPClient = handlerClient(handler)
 	code, err := client.StartDeviceCode(t.Context(), DeviceCodeRequest{
-		DeviceName:    "Workstation",
-		MachineID:     "abc123",
-		OS:            "linux",
-		Arch:          "amd64",
-		ClientVersion: FullVersion(),
+		SigningPublicKey: "login-public-key",
+		DeviceName:       "Workstation",
+		MachineID:        "abc123",
+		OS:               "linux",
+		Arch:             "amd64",
+		ClientVersion:    FullVersion(),
 	})
 	if err != nil {
 		t.Fatalf("StartDeviceCode() error = %v", err)
 	}
-	if deviceRequest.DeviceName != "Workstation" || deviceRequest.MachineID != "abc123" || deviceRequest.ClientVersion != FullVersion() {
+	if deviceRequest.SigningPublicKey != "login-public-key" || deviceRequest.DeviceName != "Workstation" || deviceRequest.MachineID != "abc123" || deviceRequest.ClientVersion != FullVersion() {
 		t.Fatalf("device request = %+v", deviceRequest)
 	}
 	if code.DeviceCode != "dev-1" || code.UserCode != "ABCD-1234" || code.Interval != 1 {
