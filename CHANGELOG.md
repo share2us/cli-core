@@ -5,6 +5,19 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.61.0 — 2026-10-08
+
+### Added
+
+- Peer compatibility check. LAN adverts now carry a `min` TXT key: the oldest peer
+  build the advertiser will transfer with (`MinCompatibleVersion`, overridable via
+  `ListenInfo.MinPeer`; `"-"` suppresses it). A discovered `Peer` exposes `MinPeer`,
+  and `CompatWith(myVersion, peerVersion, peerMin)` returns `ok` / `older` /
+  `incompatible` / `unknown` so a consumer can block an incompatible transfer and
+  warn on a merely-older one. Missing or non-stamp versions are `unknown` and never
+  block. `MinCompatibleVersion` sits below every current release, so nothing that
+  works today is gated; it is a floor raised only for a real wire-format break.
+
 ## v0.60.0 — 2026-10-08
 
 ### Added

@@ -24,6 +24,11 @@ type PairingInfo struct {
 	Port        int
 	Fingerprint string
 	Password    string
+	// AppVersion and MinPeer are the discovered receiver's advertised build stamp
+	// and compatibility floor (mDNS "app"/"min" keys), so a sender can check
+	// CompatWith before starting. Both "" when the receiver advertised none.
+	AppVersion string
+	MinPeer    string
 }
 
 // Addr returns host:port.

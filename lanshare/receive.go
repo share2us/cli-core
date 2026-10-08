@@ -131,6 +131,11 @@ type ListenInfo struct {
 	// the app's value (the CLI/GUI sets it); lanshare never fills it in. Empty
 	// when the advertiser did not supply one, so older peers are unaffected.
 	AppVersion string
+	// MinPeer is the oldest peer build this advertiser will transfer with, so a
+	// peer can refuse before starting an incompatible transfer. Defaults to
+	// MinCompatibleVersion when the app leaves it blank; set to "-" to advertise
+	// none (older peers simply fall back to their own floor).
+	MinPeer string
 }
 
 // ReceiveResult reports a completed transfer. SenderKey is the peer's verified
