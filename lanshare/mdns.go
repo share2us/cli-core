@@ -113,7 +113,7 @@ func Discover(ctx context.Context, name string, timeout time.Duration) (PairingI
 				continue
 			}
 			select {
-			case found <- PairingInfo{Host: host, Port: e.Port, Fingerprint: txtValue(e.Text, "f")}:
+			case found <- PairingInfo{Host: host, Port: e.Port, Fingerprint: txtValue(e.Text, "f"), AppVersion: txtValue(e.Text, "app"), MinPeer: txtValue(e.Text, "min")}:
 			default:
 			}
 			return
