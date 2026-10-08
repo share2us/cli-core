@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -97,6 +98,13 @@ type ReceiveOptions struct {
 	// for a discoverable device). OnReceived fires per completed transfer.
 	Loop       bool
 	OnReceived func(ReceiveResult)
+	// OnTransferStart, if set, fires once an approved transfer begins receiving,
+	// with its details and a cancel function. cancel(keepPartial) stops THIS
+	// transfer only, without touching the listener or other in-flight transfers:
+	// keepPartial=true leaves the partial on disk so the sender can resume it
+	// later (a "pause"); keepPartial=false discards it (a "cancel"). Resume is
+	// only possible for a push the sender marked resumable (its SHA was declared).
+	OnTransferStart func(info RequestInfo, cancel func(keepPartial bool))
 }
 
 // RequestInfo describes an inbound transfer an authenticated sender is offering,
@@ -468,6 +476,25 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		return ReceiveResult{}, false, nil
 	}
 
+	// Per-transfer cancellation. OnTransferStart hands the caller a cancel it can
+	// call to stop THIS transfer alone (the shared ctx would stop the whole
+	// listener). keepPartial=false discards the partial so nothing is left to
+	// resume; true leaves it for the sender to continue from.
+	rctx := ctx
+	var discard atomic.Bool
+	if opts.OnTransferStart != nil {
+		var tcancel context.CancelFunc
+		rctx, tcancel = context.WithCancel(ctx)
+		defer tcancel()
+		info := RequestInfo{PeerIP: peerIP, Name: filepath.Base(outPath), Size: h.Size, IsDir: h.IsDir, SenderKey: senderKey, SenderName: SanitizeName(h.SenderName)}
+		opts.OnTransferStart(info, func(keepPartial bool) {
+			if !keepPartial {
+				discard.Store(true)
+			}
+			tcancel()
+		})
+	}
+
 	// Receive the stream into a temp file in the destination dir, then rename.
 	//
 	// The deadline used to be cleared outright, leaving the transfer bounded
@@ -483,9 +510,9 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 		rerr    error
 	)
 	if partialPath != "" {
-		written, sum, rerr = receiveResumableToFile(ctx, conn, partialPath, outPath, resumeAt, h.Size, h.SHA256, opts.Overwrite, opts.OnProgress)
+		written, sum, rerr = receiveResumableToFile(rctx, conn, partialPath, outPath, resumeAt, h.Size, h.SHA256, opts.Overwrite, opts.OnProgress, &discard)
 	} else {
-		written, sum, rerr = receiveToFile(ctx, conn, outPath, h.Size, opts.Overwrite, opts.OnProgress)
+		written, sum, rerr = receiveToFile(rctx, conn, outPath, h.Size, opts.Overwrite, opts.OnProgress)
 	}
 	if rerr != nil {
 		sendError(conn, "write failed")
@@ -510,7 +537,7 @@ func handleConn(ctx context.Context, conn net.Conn, opts ReceiveOptions, passwor
 // a final digest that does not match what the sender declared. Keeping a partial
 // we know to be wrong would poison every later attempt, since the next resume
 // would build on top of it.
-func receiveResumableToFile(ctx context.Context, conn net.Conn, partialPath, outPath string, offset, total int64, wantSHA string, overwrite bool, onProgress func(received, total int64)) (int64, string, error) {
+func receiveResumableToFile(ctx context.Context, conn net.Conn, partialPath, outPath string, offset, total int64, wantSHA string, overwrite bool, onProgress func(received, total int64), discardOnCancel *atomic.Bool) (int64, string, error) {
 	digest := sha256.New()
 	var (
 		f   *os.File
@@ -553,10 +580,12 @@ func receiveResumableToFile(ctx context.Context, conn net.Conn, partialPath, out
 	for {
 		select {
 		case <-ctx.Done():
-			if !closed {
-				_ = f.Close()
+			if discardOnCancel != nil && discardOnCancel.Load() {
+				drop() // a cancel (not a pause): leave nothing to resume
+			} else if !closed {
+				_ = f.Close() // a pause: keep the partial, which is what resume is for
 			}
-			return 0, "", ctx.Err() // keep the partial: this is exactly what resume is for
+			return 0, "", ctx.Err()
 		default:
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))

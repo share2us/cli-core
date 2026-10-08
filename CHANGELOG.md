@@ -5,6 +5,20 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.62.0 — 2026-10-08
+
+### Added
+
+- Per-transfer cancellation on the receiver. `ReceiveOptions.OnTransferStart`
+  fires when an approved transfer begins receiving, handing back a
+  `cancel(keepPartial bool)` that stops THAT transfer alone without touching the
+  listener or other in-flight transfers. `keepPartial=true` is a pause (the
+  partial is left for the sender to resume); `false` is a cancel (the partial is
+  discarded). A sender can already pause/resume by cancelling and re-sending: an
+  interrupted resumable push keeps its partial (on ctx cancel or a dropped
+  connection) and a resend continues from the offset. Test:
+  `TestOnTransferStartCancelKeepsOrDiscardsPartial`.
+
 ## v0.61.0 — 2026-10-08
 
 ### Added
