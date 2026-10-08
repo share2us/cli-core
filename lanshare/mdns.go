@@ -37,6 +37,9 @@ func receiverTXT(info ListenInfo) []string {
 	if info.AppVersion != "" {
 		txt = append(txt, "app="+info.AppVersion)
 	}
+	if m := advertisedMin(info); m != "" {
+		txt = append(txt, "min="+m)
+	}
 	return txt
 }
 
@@ -74,6 +77,9 @@ func AdvertiseBroadcast(displayName string, info ListenInfo, fileName string, fi
 	}
 	if info.AppVersion != "" {
 		txt = append(txt, "app="+info.AppVersion)
+	}
+	if m := advertisedMin(info); m != "" {
+		txt = append(txt, "min="+m)
 	}
 	server, err := zeroconf.Register(instance, mdnsService, mdnsDomain, info.Port, txt, nil)
 	if err != nil {
@@ -145,6 +151,9 @@ type Peer struct {
 	// AppVersion is the advertiser's Share2Us build stamp, from the "app" TXT key
 	// (cli-core v0.60.0+); "" when the peer did not advertise one.
 	AppVersion string
+	// MinPeer is the oldest build this peer will transfer with, from the "min" TXT
+	// key (cli-core v0.61.0+); "" when the peer did not advertise one.
+	MinPeer string
 }
 
 // Addr returns host:port.
@@ -215,6 +224,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 				FileName:            SanitizeName(txtValue(e.Text, "fn")),
 				FileSize:            fsize,
 				AppVersion:          txtValue(e.Text, "app"),
+				MinPeer:             txtValue(e.Text, "min"),
 			}
 		}
 		close(done)
