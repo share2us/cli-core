@@ -15,3 +15,17 @@ func TestReceiverTXTCarriesIdentityFingerprint(t *testing.T) {
 		t.Fatalf("unexpected id for identity-less receiver: %q", v)
 	}
 }
+
+func TestAdvertsCarryAppVersion(t *testing.T) {
+	// Receive advert: the app build stamp rides the "app" TXT key so a peer can
+	// show which version is on the other end.
+	rx := receiverTXT(ListenInfo{Fingerprint: "cert", Mode: ModeOpen, AppVersion: "20261008101506"})
+	if got := txtValue(rx, "app"); got != "20261008101506" {
+		t.Fatalf("receive advert app = %q, want the build stamp", got)
+	}
+	// An advertiser that supplies no version adds no key, so older peers are
+	// unaffected and the field stays optional.
+	if got := txtValue(receiverTXT(ListenInfo{Fingerprint: "c", Mode: ModeOpen}), "app"); got != "" {
+		t.Fatalf("unexpected app key for version-less receiver: %q", got)
+	}
+}

@@ -5,6 +5,17 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.60.0 — 2026-10-08
+
+### Added
+
+- LAN adverts now carry the advertiser's Share2Us build stamp in the `app` TXT
+  key, so a peer can show which version is on the other end before sending.
+  `ListenInfo.AppVersion` (set by the app; lanshare never fills it in) is emitted
+  by both the receive advert and a broadcast offer, and a discovered `Peer`
+  exposes it as `AppVersion`. Optional: a version-less advertiser adds no key and
+  older peers are unaffected.
+
 ## v0.59.0 — 2026-10-08
 
 ### Changed
