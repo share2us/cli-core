@@ -126,6 +126,11 @@ type ListenInfo struct {
 	IdentityFingerprint string
 	Passphrase          string // effective password in password mode; "" otherwise
 	Mode                string // ModePassword | ModeAllowIP | ModeOpen
+	// AppVersion is the Share2Us build stamp of the advertising device, surfaced
+	// so a peer can show which version is on the other end before sending. It is
+	// the app's value (the CLI/GUI sets it); lanshare never fills it in. Empty
+	// when the advertiser did not supply one, so older peers are unaffected.
+	AppVersion string
 }
 
 // ReceiveResult reports a completed transfer. SenderKey is the peer's verified
