@@ -98,10 +98,30 @@ func clientTLSConfig(pinFingerprint string) *tls.Config {
 			if len(rawCerts) == 0 {
 				return errors.New("lanshare: peer presented no certificate")
 			}
-			if got := certFingerprint(rawCerts[0]); got != want {
-				return fmt.Errorf("lanshare: peer certificate fingerprint mismatch (possible MITM)")
+			// Legacy / same-session pin: the exact ephemeral certificate.
+			if certFingerprint(rawCerts[0]) == want {
+				return nil
 			}
-			return nil
+			// Stable pin: the device's IDENTITY fingerprint. The ephemeral cert
+			// carries a card (the persistent Ed25519 identity + a signature over
+			// THIS certificate's own public key); cardFromCert verifies that
+			// binding, so matching the card's identity authenticates the device
+			// even after it regenerated its certificate. This is what lets a
+			// shared code or a trusted device survive the peer restarting its
+			// receiver, instead of reading as a MITM.
+			if leaf, err := x509.ParseCertificate(rawCerts[0]); err == nil {
+				if card, ok := cardFromCert(leaf); ok {
+					if normalizeFingerprint(card.Fingerprint()) == want {
+						return nil
+					}
+					// A card is present and its identity is NOT the pinned one:
+					// a different device is answering. That is the real MITM case.
+					return fmt.Errorf("lanshare: peer identity fingerprint mismatch (possible MITM)")
+				}
+			}
+			// No verifiable card and the certificate is not the pinned one: cannot
+			// prove who this is.
+			return fmt.Errorf("lanshare: peer certificate fingerprint mismatch (possible MITM)")
 		}
 	}
 	return cfg

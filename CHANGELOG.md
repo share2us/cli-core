@@ -5,6 +5,21 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.59.0 — 2026-10-08
+
+### Changed
+
+- lanshare trust is now anchored on the STABLE device identity, not the ephemeral
+  per-session certificate. A sender may pin the identity fingerprint and the TLS
+  layer verifies it via the certificate's signed card, so a shared code / trusted
+  device survives the peer regenerating its cert instead of failing with
+  "certificate fingerprint mismatch (possible MITM)". Pairing strings now carry
+  the identity fingerprint (`i`) alongside the legacy cert fingerprint (`f`), and
+  a reader prefers it; cert-fingerprint pins still work for same-session/older
+  peers. "possible MITM" now means a genuine identity mismatch.
+
+## v0.58.0 — 2026-10-07
+
 ### Added
 
 - Login signing-key preparation for ADR-045: persist/reuse the Ed25519 pair

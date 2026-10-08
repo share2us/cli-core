@@ -102,7 +102,7 @@ func Broadcast(ctx context.Context, opts BroadcastOptions) error {
 	defer ln.Close()
 	tlsLn := tls.NewListener(ln, serverTLSConfig(cert))
 
-	li := ListenInfo{BindAddr: opts.Bind, Port: port, Fingerprint: fingerprint, Mode: ModeOpen}
+	li := ListenInfo{BindAddr: opts.Bind, Port: port, Fingerprint: fingerprint, IdentityFingerprint: identityFingerprintOf(opts.Identity), Mode: ModeOpen}
 	if opts.OnListen != nil {
 		opts.OnListen(li)
 	}

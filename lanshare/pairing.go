@@ -40,6 +40,13 @@ func BuildPairingString(host string, info ListenInfo) string {
 		Path:   "/join",
 	}
 	q := url.Values{}
+	// "i" is the STABLE identity fingerprint, preferred by senders that
+	// understand it so a code survives the receiver regenerating its ephemeral
+	// cert. "f" is the per-session cert fingerprint, kept for older senders that
+	// pin the certificate directly (same session only).
+	if info.IdentityFingerprint != "" {
+		q.Set("i", info.IdentityFingerprint)
+	}
 	if info.Fingerprint != "" {
 		q.Set("f", info.Fingerprint)
 	}
@@ -73,10 +80,18 @@ func ParsePairingString(s string) (PairingInfo, error) {
 		return PairingInfo{}, fmt.Errorf("lanshare: pairing string has invalid port %q", portStr)
 	}
 	q := u.Query()
+	// Prefer the stable identity fingerprint when the code carries one; fall back
+	// to the per-session cert fingerprint for codes from older receivers. The
+	// sender pins whichever this is, and the TLS layer accepts an identity pin via
+	// the certificate's signed card or a cert pin directly.
+	fp := q.Get("i")
+	if fp == "" {
+		fp = q.Get("f")
+	}
 	return PairingInfo{
 		Host:        host,
 		Port:        port,
-		Fingerprint: q.Get("f"),
+		Fingerprint: fp,
 		Password:    q.Get("k"),
 	}, nil
 }
