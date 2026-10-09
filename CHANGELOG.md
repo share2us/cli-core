@@ -5,6 +5,17 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+## v0.63.0 — 2026-10-09
+
+### Fixed
+
+- A pause/cancel (context cancellation) during a resumable send's pre-send SHA hash
+  — or the resume re-hash of the already-sent prefix — is now honored promptly
+  instead of being ignored until the whole file has been read. On a multi-GB file
+  those reads took tens of seconds, during which a pause "kept going". The hash and
+  re-hash now copy in chunks and check the context between them
+  (`TestSendCancelDuringPreSendHash`, `TestSendCancelThenResumeCancelAgain`).
+
 ## v0.62.0 — 2026-10-08
 
 ### Added
