@@ -94,7 +94,7 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 	seeker, seekable := body.(io.ReadSeeker)
 	resumable := opts.Resume && seekable && !isDir
 	if resumable {
-		sum, herr := hashSeekable(seeker)
+		sum, herr := hashSeekable(ctx, seeker)
 		if herr != nil {
 			return "", herr
 		}
@@ -152,7 +152,7 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
 			return "", err
 		}
-		if _, err := io.CopyN(digest, seeker, acc.ResumeOffset); err != nil {
+		if _, err := ctxCopyN(ctx, digest, seeker, acc.ResumeOffset); err != nil {
 			return "", fmt.Errorf("lanshare: re-hash for resume: %w", err)
 		}
 		sent = acc.ResumeOffset
@@ -186,18 +186,54 @@ func Send(ctx context.Context, name string, size int64, isDir bool, body io.Read
 
 // hashSeekable digests the whole reader and rewinds it, so the caller can still
 // stream from the start afterwards.
-func hashSeekable(rs io.ReadSeeker) (string, error) {
+func hashSeekable(ctx context.Context, rs io.ReadSeeker) (string, error) {
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
 	digest := sha256.New()
-	if _, err := io.Copy(digest, rs); err != nil {
+	// ctx-aware so a pause/cancel during the pre-send hash of a large file is not
+	// ignored for the whole read (a 6.5 GB file is tens of seconds).
+	if _, err := ctxCopyN(ctx, digest, rs, -1); err != nil {
 		return "", fmt.Errorf("lanshare: hash source: %w", err)
 	}
 	if _, err := rs.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// ctxCopyN copies n bytes (all when n < 0) from src to dst in chunks, returning
+// promptly with ctx.Err() if ctx is cancelled between chunks. Used for the pre-send
+// hash and the resume re-hash so those whole-file reads honor a pause/cancel.
+func ctxCopyN(ctx context.Context, dst io.Writer, src io.Reader, n int64) (int64, error) {
+	buf := make([]byte, 1<<20) // 1 MiB
+	var total int64
+	for n < 0 || total < n {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		chunk := int64(len(buf))
+		if n >= 0 && n-total < chunk {
+			chunk = n - total
+		}
+		r, rerr := src.Read(buf[:chunk])
+		if r > 0 {
+			if _, werr := dst.Write(buf[:r]); werr != nil {
+				return total, werr
+			}
+			total += int64(r)
+		}
+		if rerr == io.EOF {
+			if n >= 0 && total < n {
+				return total, io.ErrUnexpectedEOF
+			}
+			return total, nil
+		}
+		if rerr != nil {
+			return total, rerr
+		}
+	}
+	return total, nil
 }
 
 // streamBody writes body as msgData frames, hashing as it goes, then msgEOF.
