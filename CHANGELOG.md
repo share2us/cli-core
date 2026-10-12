@@ -7,6 +7,15 @@ reaches users only when one of those is released.
 
 ### Added
 
+- `GenerateWebKey` + `NewWebKeyPassphrase` + `SaveWebKey`: the CLI can now set up the
+  account's portal web key itself (PBKDF2-SHA256 + AES-GCM wrapping that the portal
+  unwraps), so a decrypt key can be auto-generated when the user does not provide one
+  (ADR-046 Phase 2).
+
+## v0.65.0 — 2026-10-12
+
+### Added
+
 - Form shares Phase 2 (ADR-046): `GetAccountWebKey` and `ResealFormResponsesWeb` client
   calls, and a `WebSealedKey` field on the response payload. Lets the CLI re-seal a form's
   existing responses to the owner's portal web key so they become readable in the browser.
