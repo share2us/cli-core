@@ -7,11 +7,20 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Form shares Phase 2 (ADR-046): `GetAccountWebKey` and `ResealFormResponsesWeb` client
+  calls, and a `WebSealedKey` field on the response payload. Lets the CLI re-seal a form's
+  existing responses to the owner's portal web key so they become readable in the browser.
+
+## v0.64.0 — 2026-10-12
+
+### Added
+
 - Interactive form shares (ADR-046): `SealFormResponse`/`OpenFormResponse` and the
   `SealBytesWithKey`/`OpenBytesWithKey` helpers (AES-256-GCM response body under a random
   content key, the content key sealed per reader device via the existing anonymous-box
   primitive), plus `ListFormResponses`/`GetFormResponse` client calls. Lets the CLI read
-  and locally decrypt the end-to-end-encrypted responses to a form.
+  and locally decrypt the end-to-end-encrypted responses to a form. Also classifies `.mdx`
+  as the `form` content class.
 
 ## v0.63.0 — 2026-10-09
 

@@ -5,6 +5,8 @@ package clicore
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,8 +35,9 @@ type FormSealedKey struct {
 // FormResponsePayload is a sealed response body plus the sealed keys for the caller's own
 // devices (the server filters to the reader's devices).
 type FormResponsePayload struct {
-	Ciphertext string          `json:"ciphertext"`
-	SealedKeys []FormSealedKey `json:"sealed_keys"`
+	Ciphertext   string          `json:"ciphertext"`
+	SealedKeys   []FormSealedKey `json:"sealed_keys"`
+	WebSealedKey string          `json:"web_sealed_key,omitempty"`
 }
 
 // ListFormResponses returns the owner's Submissions page for a form share.
@@ -64,4 +67,45 @@ func (c *Client) GetFormResponse(ctx context.Context, formID, responseID string)
 	path := "/v1/forms/" + url.PathEscape(formID) + "/responses/" + url.PathEscape(responseID)
 	err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
 	return out, err
+}
+
+// AccountWebKey is the portal web key (ADR-046 Phase 2): the X25519 public key plus the
+// passphrase-wrapped private key (opaque; only the portal unwraps it) and its KDF params.
+type AccountWebKey struct {
+	PublicKey         string          `json:"public_key"`
+	WrappedPrivateKey string          `json:"wrapped_private_key"`
+	KDF               json.RawMessage `json:"kdf"`
+}
+
+// ResponseWebSeal is one re-sealed response: the content key sealed to the owner's web key.
+type ResponseWebSeal struct {
+	ResponseID string `json:"response_id"`
+	SealedKey  string `json:"sealed_key"`
+}
+
+// GetAccountWebKey returns the caller's web key. ok is false (no error) when none is set.
+func (c *Client) GetAccountWebKey(ctx context.Context) (AccountWebKey, bool, error) {
+	var out AccountWebKey
+	err := c.doJSON(ctx, http.MethodGet, "/v1/account/web-key", nil, &out)
+	if err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return AccountWebKey{}, false, nil
+		}
+		return AccountWebKey{}, false, err
+	}
+	return out, true, nil
+}
+
+// ResealFormResponsesWeb attaches owner web-sealed content keys to existing responses so
+// they become readable in the portal. Returns how many the server stored.
+func (c *Client) ResealFormResponsesWeb(ctx context.Context, formID string, seals []ResponseWebSeal) (int, error) {
+	in := struct {
+		Seals []ResponseWebSeal `json:"seals"`
+	}{Seals: seals}
+	var out struct {
+		Resealed int `json:"resealed"`
+	}
+	err := c.doJSON(ctx, http.MethodPost, "/v1/forms/"+url.PathEscape(formID)+"/reseal-web", in, &out)
+	return out.Resealed, err
 }
