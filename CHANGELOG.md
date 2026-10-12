@@ -5,6 +5,14 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Added
+
+- Interactive form shares (ADR-046): `SealFormResponse`/`OpenFormResponse` and the
+  `SealBytesWithKey`/`OpenBytesWithKey` helpers (AES-256-GCM response body under a random
+  content key, the content key sealed per reader device via the existing anonymous-box
+  primitive), plus `ListFormResponses`/`GetFormResponse` client calls. Lets the CLI read
+  and locally decrypt the end-to-end-encrypted responses to a form.
+
 ## v0.63.0 — 2026-10-09
 
 ### Fixed
