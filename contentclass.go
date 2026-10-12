@@ -30,6 +30,11 @@ func ContentClassForNameAndType(name, contentType string) string {
 		return "7z"
 	case strings.HasSuffix(normalizedName, ".tar"):
 		return "tar"
+	case strings.HasSuffix(normalizedName, ".mdx"):
+		// An .mdx is an interactive form (ADR-046): a whitelisted-tag form document.
+		// Plain prose uses .md/.markdown. The server validates it as a form at upload
+		// complete and rejects a malformed one.
+		return "form"
 	case strings.HasSuffix(normalizedName, ".md"), strings.HasSuffix(normalizedName, ".markdown"):
 		return "markdown"
 	case strings.HasSuffix(normalizedName, ".yml"), strings.HasSuffix(normalizedName, ".yaml"):
