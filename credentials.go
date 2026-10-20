@@ -150,8 +150,28 @@ func DeleteCredential() error {
 	if err != nil {
 		return err
 	}
+	// Pass the legacy path too. LoadCredential falls back to it when the new path
+	// is absent AND migrates it forward, so leaving the legacy file in place
+	// silently resurrects a credential the user just deleted: logout looks broken
+	// (the username keeps coming back with a now-stale token). On Linux/macOS
+	// legacy == path, so this is a no-op there; it matters on Windows where the
+	// pre-2026-07 path (%USERPROFILE%\.config) differs from %AppData%.
+	legacy, _ := legacyCredentialPath()
+	return deleteCredentialFiles(path, legacy)
+}
+
+// deleteCredentialFiles removes the primary credential and, when it differs, the
+// legacy one. A missing file is not an error; the first real removal error (if
+// any) is returned after attempting both.
+func deleteCredentialFiles(path, legacy string) error {
+	var firstErr error
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		firstErr = err
 	}
-	return nil
+	if legacy != "" && legacy != path {
+		if err := os.Remove(legacy); err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

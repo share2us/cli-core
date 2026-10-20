@@ -5,6 +5,7 @@ package clicore
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,5 +97,31 @@ func TestCredentialCorruptJSONStillErrors(t *testing.T) {
 	_, err := LoadCredentialAt(path)
 	if err == nil || !strings.Contains(err.Error(), "parse credentials") {
 		t.Fatalf("LoadCredentialAt() error = %v, want parse credentials error", err)
+	}
+}
+
+// TestDeleteCredentialFilesRemovesBoth guards the Windows logout bug: logging out
+// must remove the legacy credential too, or LoadCredential resurrects it from the
+// pre-2026-07 location and the GUI/CLI looks logged in with a stale token.
+func TestDeleteCredentialFilesRemovesBoth(t *testing.T) {
+	dir := t.TempDir()
+	primary := filepath.Join(dir, "new", "credentials.json")
+	legacy := filepath.Join(dir, "legacy", "credentials.json")
+	for _, p := range []string{primary, legacy} {
+		if err := SaveCredentialAt(p, Credential{Token: "s2s_x", APIBase: DefaultAPIBase}); err != nil {
+			t.Fatalf("seed %s: %v", p, err)
+		}
+	}
+	if err := deleteCredentialFiles(primary, legacy); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	for _, p := range []string{primary, legacy} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected %s removed, stat err = %v", p, err)
+		}
+	}
+	// Idempotent: a second delete with both already gone is not an error.
+	if err := deleteCredentialFiles(primary, legacy); err != nil {
+		t.Fatalf("second delete should be a no-op: %v", err)
 	}
 }
