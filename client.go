@@ -187,6 +187,11 @@ type UploadCreateRequest struct {
 	// deleted. Encryption, recipients, passwords and live updates do not apply.
 	SharenetID string `json:"sharenet_id,omitempty"`
 	ProjectID  string `json:"project_id,omitempty"`
+	// AgentID says an agent (not the human) is posting into a sharenet project
+	// (ADR-050): the server refuses unless the agent's owner allowed it to post, and
+	// records the agent as the poster. Set by the CLI from S2U_AGENT_ID, which
+	// `s2u claude` and the daemon put in the agent's own process environment.
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 type UploadTarget struct {
