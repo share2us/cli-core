@@ -7,6 +7,10 @@ reaches users only when one of those is released.
 
 ### Added
 
+- `UploadCreateRequest.AgentID` (`agent_id`): marks an upload into a sharenet project as an
+  agent's post (ADR-050). The server refuses it unless the agent's owner allowed the agent to
+  post, and records the agent as the poster.
+
 - `GenerateWebKey` + `NewWebKeyPassphrase` + `SaveWebKey`: the CLI can now set up the
   account's portal web key itself (PBKDF2-SHA256 + AES-GCM wrapping that the portal
   unwraps), so a decrypt key can be auto-generated when the user does not provide one
