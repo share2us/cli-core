@@ -134,6 +134,12 @@ Sharenet files (for the members, not a link):
                               the like) are refused with these, and your standing
                               defaults for encryption, view limits and domains are not
                               applied.
+                              In a Secure ShareNet the file, its name and its type are
+                              end-to-end encrypted first (needs 'keys enrol' once).
+  sharenet files ID           List a sharenet's files (names decrypted where you can)
+  sharenet get ID FILE [-o P] Download one, decrypting a Secure ShareNet's file
+  keys                        Secure ShareNet keys: enrol, recover, approve devices,
+                              members' fingerprints, trust, sync ('keys help')
 
 Email shares:
   --email EMAIL               Share with a recipient email; repeat or comma-separate.
