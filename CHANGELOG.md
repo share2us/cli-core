@@ -7,6 +7,11 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Secure ShareNet primitives (ADR-051): `WrapV1`/`UnwrapV1` (X25519 + HKDF-SHA256 +
+  AES-256-GCM, purpose-bound), account keys as PKCS#8, recovery codes (`NewRecoveryCode`,
+  `RecoveryKey`), `SealSym`/`OpenSym` with context AAD helpers, `DeviceECDHKey`. Pinned test
+  vectors in `testdata/securenet_vectors.json`, verified to reproduce in browser WebCrypto.
+
 - `UploadCreateRequest.AgentID` (`agent_id`): marks an upload into a sharenet project as an
   agent's post (ADR-050). The server refuses it unless the agent's owner allowed the agent to
   post, and records the agent as the poster.
