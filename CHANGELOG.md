@@ -7,6 +7,13 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Secure ShareNet on devices (ADR-051 milestone 3): `Keyring` (enrol with a recovery code,
+  register/approve devices, recover, open the account key wrapped to this device),
+  `SecureNet` (open epoch keys incl. the chain, rotate or restart, hand the key to waiting
+  members, seal/open a file's key and name), TOFU `PinStore` + `KeyFingerprint` safety
+  numbers, `KeyDeviceID`, client calls for sharenets/projects/files/secure state, Secure
+  fields on `UploadCreateRequest`, and `APIError.Detail`.
+
 - Secure ShareNet primitives (ADR-051): `WrapV1`/`UnwrapV1` (X25519 + HKDF-SHA256 +
   AES-256-GCM, purpose-bound), account keys as PKCS#8, recovery codes (`NewRecoveryCode`,
   `RecoveryKey`), `SealSym`/`OpenSym` with context AAD helpers, `DeviceECDHKey`. Pinned test

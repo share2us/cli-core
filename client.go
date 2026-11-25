@@ -86,6 +86,9 @@ type APIError struct {
 	Message     string
 	RequestID   string
 	DeviceLimit *DeviceLimitDetails
+	// Detail is machine-readable context some codes carry (e.g. secure_required:
+	// sharenet_id, current_epoch).
+	Detail map[string]any
 }
 
 func (e *APIError) Error() string {
@@ -192,6 +195,13 @@ type UploadCreateRequest struct {
 	// records the agent as the poster. Set by the CLI from S2U_AGENT_ID, which
 	// `s2u claude` and the daemon put in the agent's own process environment.
 	AgentID string `json:"agent_id,omitempty"`
+	// Secure ShareNet post (ADR-051): the epoch the file key is sealed under, the sealed
+	// file key and name, and the random id they are bound to. FileName must then be a
+	// placeholder, never the real name.
+	SecureEpoch  int    `json:"secure_epoch,omitempty"`
+	FileKeyWrap  []byte `json:"file_key_wrap,omitempty"`
+	FileNameCT   []byte `json:"file_name_ct,omitempty"`
+	SecureFileID string `json:"secure_file_id,omitempty"`
 }
 
 type UploadTarget struct {
@@ -1063,9 +1073,10 @@ func decodeAPIError(resp *http.Response) *APIError {
 func decodeAPIErrorFromBody(resp *http.Response, body []byte) *APIError {
 	var envelope struct {
 		Error struct {
-			Code      string `json:"code"`
-			Message   string `json:"message"`
-			RequestID string `json:"request_id"`
+			Code      string         `json:"code"`
+			Message   string         `json:"message"`
+			RequestID string         `json:"request_id"`
+			Detail    map[string]any `json:"detail"`
 		} `json:"error"`
 		Sessions []DeviceSession `json:"sessions"`
 		Limit    int             `json:"limit"`
@@ -1076,6 +1087,7 @@ func decodeAPIErrorFromBody(resp *http.Response, body []byte) *APIError {
 		Code:      envelope.Error.Code,
 		Message:   envelope.Error.Message,
 		RequestID: envelope.Error.RequestID,
+		Detail:    envelope.Error.Detail,
 	}
 	if apiErr.Code == "device_limit_reached" {
 		apiErr.DeviceLimit = &DeviceLimitDetails{
