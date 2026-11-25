@@ -281,8 +281,6 @@ type AgentGrant struct {
 	ApprovedAt     string `json:"approved_at"`
 }
 
-// AgentApproveOnce approves a single pending request WITHOUT granting the sender
-// standing access (target side).
 // AgentCancel withdraws a request this device sent that hasn't started running.
 func (c *Client) AgentCancel(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/cancel", nil, nil)
@@ -309,6 +307,8 @@ func (c *Client) AgentUpdates(ctx context.Context) ([]AgentUpdate, error) {
 	return out.Updates, err
 }
 
+// AgentApproveOnce approves a single pending request WITHOUT granting the sender
+// standing access (target side).
 func (c *Client) AgentApproveOnce(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/approve", nil, nil)
 }
