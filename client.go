@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"github.com/share2us/cli-core/lanid"
@@ -814,6 +815,11 @@ func (c *Client) DownloadInboxContent(ctx context.Context, publicID string, dst 
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := readLimitedBody(resp)
+		// Object storage (R2) answers through Cloudflare, so its refusals carry cf-ray and
+		// Server: cloudflare; an S3 XML error is a storage error, never a challenge.
+		if code, msg, ok := storageError(body); ok {
+			return &APIError{Status: resp.StatusCode, Code: "download_failed", Message: fmt.Sprintf("storage refused the download (HTTP %d %s): %s", resp.StatusCode, code, msg)}
+		}
 		if isCloudflareChallenge(resp, body) {
 			return cloudflareChallengeError(resp.StatusCode)
 		}
@@ -934,6 +940,11 @@ func (c *Client) PutUpload(ctx context.Context, upload PresignedUpload, body io.
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := readLimitedBody(resp)
+		// Object storage (R2) answers through Cloudflare, so its refusals carry cf-ray and
+		// Server: cloudflare; an S3 XML error is a storage error, never a challenge.
+		if code, msg, ok := storageError(body); ok {
+			return &APIError{Status: resp.StatusCode, Code: "upload_failed", Message: fmt.Sprintf("storage refused the upload (HTTP %d %s): %s", resp.StatusCode, code, msg)}
+		}
 		if isCloudflareChallenge(resp, body) {
 			return cloudflareChallengeError(resp.StatusCode)
 		}
@@ -968,6 +979,9 @@ func (c *Client) DownloadURL(ctx context.Context, rawURL string, dst io.Writer) 
 		resp.Body.Close()
 		if readErr != nil {
 			return readErr
+		}
+		if code, msg, ok := storageError(body); ok {
+			return &APIError{Status: resp.StatusCode, Code: "download_failed", Message: fmt.Sprintf("storage refused the download (HTTP %d %s): %s", resp.StatusCode, code, msg)}
 		}
 		if isCloudflareChallenge(resp, body) {
 			return cloudflareChallengeError(resp.StatusCode)
@@ -1188,6 +1202,19 @@ func isCloudflareChallenge(resp *http.Response, body []byte) bool {
 func looksLikeJSON(body []byte) bool {
 	trimmed := strings.TrimSpace(string(body))
 	return strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")
+}
+
+// storageError reads an S3-style XML error body (<Error><Code>..</Code><Message>..</Message>).
+func storageError(body []byte) (code, message string, ok bool) {
+	var e struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+		Message string   `xml:"Message"`
+	}
+	if err := xml.Unmarshal(bytes.TrimSpace(body), &e); err != nil || e.Code == "" {
+		return "", "", false
+	}
+	return e.Code, e.Message, true
 }
 
 func cloudflareChallengeError(status int) error {
