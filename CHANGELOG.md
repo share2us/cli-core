@@ -7,6 +7,8 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Agent bridge: `AgentInjectState.TargetDeviceName` (the sender learns which device a
+  request waits on).
 - Agent bridge: `AgentCancel`, `AgentUpdates` (final states of requests this device sent,
   handed back once each) and `AgentInjectInput.SenderSessionID`.
 

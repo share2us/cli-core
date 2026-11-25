@@ -125,6 +125,8 @@ type AgentInjectState struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
 	Result string `json:"result"`
+	// TargetDeviceName is set for the sender only (servers before 2026-11-25 omit it).
+	TargetDeviceName string `json:"target_device_name,omitempty"`
 }
 
 // RegisterAgentSession advertises (or heartbeats) a live session.
