@@ -5,6 +5,11 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Fixed
+
+- Uploads and downloads refused by object storage (R2) now report the storage error code
+  instead of "the server returned a Cloudflare challenge" (R2 answers through Cloudflare).
+
 ### Added
 
 - Secure ShareNet on devices (ADR-051 milestone 3): `Keyring` (enrol with a recovery code,
