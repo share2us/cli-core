@@ -49,6 +49,9 @@ type SendAgentFileParams struct {
 	ProjectID        string
 	SenderAgentID    string
 	SenderDeviceName string // shown to the recipient
+	// SenderSessionID is the agent session sending this hop; its final state is
+	// delivered back into that session. Routing only, not signed.
+	SenderSessionID string
 }
 
 // SendAgentFileResult reports what the server accepted and which transport an
@@ -143,6 +146,7 @@ func (c *Client) SendAgentFile(ctx context.Context, cred Credential, p SendAgent
 		ProjectID:       strings.TrimSpace(p.ProjectID),
 		SenderAgentID:   strings.TrimSpace(p.SenderAgentID),
 		TargetAgentID:   strings.TrimSpace(p.TargetAgentID),
+		SenderSessionID: strings.TrimSpace(p.SenderSessionID),
 	}
 	if serr := signHopWithNonce(&in, cred, time.Now(), nonce); serr != nil {
 		return SendAgentFileResult{}, serr
