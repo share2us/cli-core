@@ -45,7 +45,10 @@ func pushAgentFileLAN(ctx context.Context, targetFingerprint, senderName, nonce 
 	}
 	bctx, cancel := context.WithTimeout(ctx, agentLANBrowseTimeout+time.Second)
 	defer cancel()
-	peers, err := lanshare.Browse(bctx, agentLANBrowseTimeout)
+	peers, err := lanshare.BrowseUntil(bctx, agentLANBrowseTimeout, func(p lanshare.Peer) bool {
+		_, ok := selectAgentFilePeer([]lanshare.Peer{p}, targetFingerprint)
+		return ok
+	})
 	if err != nil {
 		return false
 	}

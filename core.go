@@ -52,6 +52,7 @@ Usage:
   %s config set-default <key> <value>
   %s config unset-default <key>
   %s whoami
+  %s status [--json]
   %s logout
   %s signout <device-id|device-name>
   %s update [--host URL] [--version VERSION] [--channel stable|beta]
@@ -180,7 +181,7 @@ Contact shares (cross-account device E2E):
 
 Optional alias:
   alias share=%s
-`, command, FullVersion(), command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, DefaultBaseURL, command, command, command, command)
+`, command, FullVersion(), command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, command, DefaultBaseURL, command, command, command, command)
 
 	// P2P is hidden entirely unless this build enables it, so a disabled build
 	// never advertises a command it will refuse to run.

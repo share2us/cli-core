@@ -5,6 +5,11 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Changed
+
+- `lanshare.BrowseUntil`: stop browsing as soon as a wanted peer answers. A direct LAN agent
+  file push now returns as soon as the target is found instead of always waiting 3 s.
+
 ### Added
 
 - Agent bridge: `AgentInjectState.TargetDeviceName` (the sender learns which device a
