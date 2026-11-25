@@ -207,11 +207,11 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 	if _, err := a1.keys.AccountKey(ctx); !errors.Is(err, ErrKeysNotEnrolled) {
 		t.Fatalf("before enrolment: %v", err)
 	}
-	code, err := a1.keys.Enrol(ctx, "laptop")
+	code, err := a1.net.Enrol(ctx, "laptop")
 	if err != nil {
 		t.Fatal(err)
 	}
-	akA, err := a1.keys.AccountKey(ctx)
+	akA, err := a1.net.AccountKey(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 	if _, err := a2.keys.AccountKey(ctx); !errors.Is(err, ErrDeviceNotApproved) {
 		t.Fatalf("unapproved device: %v", err)
 	}
-	if err := a1.keys.Approve(ctx, a2.keys.DeviceID()); err != nil {
+	if err := a1.net.ApproveDevice(ctx, a2.keys.DeviceID()); err != nil {
 		t.Fatal(err)
 	}
 	if k, err := a2.keys.AccountKey(ctx); err != nil || !k.Equal(akA) {
@@ -233,10 +233,10 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 
 	// A third recovers with the code; a wrong code doesn't open it.
 	a3 := newFakeDevice(t, srv, "acct-a", pinsA)
-	if err := a3.keys.Recover(ctx, "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA-A", "phone"); !errors.Is(err, ErrRecoveryCodeInvalid) {
+	if err := a3.net.Recover(ctx, "AAAAA-AAAAA-AAAAA-AAAAA-AAAAA-A", "phone"); !errors.Is(err, ErrRecoveryCodeInvalid) {
 		t.Fatalf("wrong code: %v", err)
 	}
-	if err := a3.keys.Recover(ctx, strings.ToLower(code), "phone"); err != nil {
+	if err := a3.net.Recover(ctx, strings.ToLower(code), "phone"); err != nil {
 		t.Fatal(err)
 	}
 	if k, err := a3.keys.AccountKey(ctx); err != nil || !k.Equal(akA) {
@@ -245,7 +245,7 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 
 	// B joins; A's first post creates epoch 1 for both; B opens the file.
 	b := newFakeDevice(t, srv, "acct-b", pinsB)
-	if _, err := b.keys.Enrol(ctx, "b"); err != nil {
+	if _, err := b.net.Enrol(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
 	api.members = []string{"acct-a", "acct-b"}
@@ -263,7 +263,7 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 
 	// C joins late and waits; any holder hands the key over.
 	c := newFakeDevice(t, srv, "acct-c", pinsC)
-	if _, err := c.keys.Enrol(ctx, "c"); err != nil {
+	if _, err := c.net.Enrol(ctx, "c"); err != nil {
 		t.Fatal(err)
 	}
 	api.members = append(api.members, "acct-c")
@@ -289,7 +289,7 @@ func TestSecureSharenetDeviceFlow(t *testing.T) {
 
 	// D joins after the rotation: handed epoch 2 only, reads epoch 1 through the chain.
 	d := newFakeDevice(t, srv, "acct-d", pinsD)
-	if _, err := d.keys.Enrol(ctx, "d"); err != nil {
+	if _, err := d.net.Enrol(ctx, "d"); err != nil {
 		t.Fatal(err)
 	}
 	api.members = append(api.members, "acct-d")
@@ -331,21 +331,91 @@ func TestKeyFingerprintAndDeviceID(t *testing.T) {
 func TestPinStoreTOFU(t *testing.T) {
 	p := pins(t)
 	k1, k2 := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
-	if err := p.Check("a", k1); err != nil {
+	if err := p.Check("a", k1, false); err != nil {
 		t.Fatal(err)
 	}
 	var changed *KeyChangedError
-	if err := p.Check("a", k2); !errors.As(err, &changed) {
+	if err := p.Check("a", k2, false); !errors.As(err, &changed) {
 		t.Fatalf("changed key: %v", err)
 	}
 	if err := p.Trust("a", k2); err != nil {
 		t.Fatal(err)
 	}
-	if p.Check("a", k1) != nil || p.Check("a", k2) != nil {
+	if p.Check("a", k1, false) != nil || p.Check("a", k2, false) != nil {
 		t.Fatal("trusted keys must both stay trusted")
 	}
 	reopened, err := OpenPinStore(p.path)
-	if err != nil || reopened.Check("a", k2) != nil {
+	if err != nil || reopened.Check("a", k2, false) != nil {
 		t.Fatalf("pins not persisted: %v", err)
 	}
+}
+
+func TestPinStoreUnattendedAndSecureMemory(t *testing.T) {
+	p := pins(t)
+	var unknown *KeyUnknownError
+	if err := p.Check("x", bytes.Repeat([]byte{9}, 32), true); !errors.As(err, &unknown) {
+		t.Fatalf("unattended first sight: %v", err)
+	}
+	if known, _ := p.Known("x"); known {
+		t.Fatal("an unattended check pinned a key")
+	}
+	if err := p.MarkSecure("net-1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := p.KnownSecure("net-1"); !ok {
+		t.Fatal("secure sharenet not remembered")
+	}
+	if !SameFingerprint("1234512345", "12345 12345") || SameFingerprint("", "") {
+		t.Fatal("fingerprint comparison")
+	}
+}
+
+// The server can't hand this account an epoch key of its own: not from an account that
+// isn't a member, and not by swapping this account's own key.
+func TestServerForgedKeysAreRefused(t *testing.T) {
+	ctx := context.Background()
+	api := newFakeKeysAPI()
+	srv := httptest.NewServer(api)
+	defer srv.Close()
+	pinsA, pinsB := pins(t), pins(t)
+	a := newFakeDevice(t, srv, "acct-a", pinsA)
+	b := newFakeDevice(t, srv, "acct-b", pinsB)
+	if _, err := a.net.Enrol(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.net.Enrol(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	api.members = []string{"acct-a", "acct-b"}
+	post, err := a.net.PreparePost(ctx, "net-1", "real.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A wrap of a server-chosen key "from" a non-member replaces B's real one.
+	evil, _ := NewAccountKey()
+	evilEK := bytes.Repeat([]byte{7}, 32)
+	akB, _ := b.net.AccountKey(ctx)
+	forged, _ := WrapV1(evil, akB.PublicKey().Bytes(), evilEK, PurposeEpochKeyToAccount, EpochKeyAAD("net-1", 1, "acct-b"))
+	real := api.wraps[1]["acct-b"]
+	api.wraps[1]["acct-b"] = EpochWrap{Epoch: 1, Wrapped: forged, WrappedByAccountID: "acct-evil", WrappedByPublicKey: evil.PublicKey().Bytes()}
+	fresh := &SecureNet{Keys: b.keys, Pins: pinsB}
+	if p, err := fresh.PreparePost(ctx, "net-1", "x"); err == nil {
+		t.Fatalf("posted under a key from a non-member: epoch %d", p.Epoch)
+	}
+	api.wraps[1]["acct-b"] = real
+
+	// The server swaps A's account key for one it holds (it can wrap it to A's device).
+	evilAK, _ := NewAccountKey()
+	pkcs8, _ := MarshalAccountKey(evilAK)
+	devID := a.keys.DeviceID()
+	w, _ := WrapV1(evilAK, a.keys.DevicePublicKey(), pkcs8, PurposeAccountKeyToDevice, DeviceWrapAAD("acct-a", devID))
+	api.keys["acct-a"].pub = evilAK.PublicKey().Bytes()
+	api.keys["acct-a"].devices[devID].Wrap = &w
+	freshA := &SecureNet{Keys: a.keys, Pins: pinsA}
+	var changed *KeyChangedError
+	if _, err := freshA.AccountKey(ctx); !errors.As(err, &changed) {
+		t.Fatalf("a swapped own account key was accepted: %v", err)
+	}
+	_ = post
 }

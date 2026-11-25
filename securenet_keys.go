@@ -99,31 +99,32 @@ func (k *Keyring) wrapToDevice(ak *ecdh.PrivateKey, devicePub []byte) (Wrapped, 
 }
 
 // Enrol creates the account key, wraps it to this device and to a new recovery code, and
-// uploads both. The returned code is shown to the user once and never stored.
-func (k *Keyring) Enrol(ctx context.Context, label string) (string, error) {
+// uploads both. The returned code is shown to the user once and never stored; the public
+// key is for the caller to pin as this account's own.
+func (k *Keyring) Enrol(ctx context.Context, label string) (string, []byte, error) {
 	ak, err := NewAccountKey()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	code, err := NewRecoveryCode()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	rk, err := RecoveryKey(code)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	pkcs8, err := MarshalAccountKey(ak)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	recWrap, err := SealSym(rk, pkcs8, RecoveryAAD(k.AccountID))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	devWrap, err := k.wrapToDevice(ak, k.DevicePublicKey())
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req := map[string]any{
 		"public_key":    ak.PublicKey().Bytes(),
@@ -131,9 +132,9 @@ func (k *Keyring) Enrol(ctx context.Context, label string) (string, error) {
 		"device":        map[string]any{"label": label, "public_key": k.DevicePublicKey(), "wrap": devWrap},
 	}
 	if err := k.Client.doJSON(ctx, http.MethodPost, "/v1/keys/enroll", req, nil); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return code, nil
+	return code, ak.PublicKey().Bytes(), nil
 }
 
 // RegisterDevice asks to join the account key; an enrolled device then approves it.
@@ -176,10 +177,10 @@ func (k *Keyring) AccountKey(ctx context.Context) (*ecdh.PrivateKey, error) {
 }
 
 // Recover opens the account key with the recovery code and approves this device with it.
-func (k *Keyring) Recover(ctx context.Context, code, label string) error {
+func (k *Keyring) Recover(ctx context.Context, code, label string) ([]byte, error) {
 	rk, err := RecoveryKey(code)
 	if err != nil {
-		return ErrRecoveryCodeInvalid
+		return nil, ErrRecoveryCodeInvalid
 	}
 	var rec struct {
 		PublicKey    []byte `json:"public_key"`
@@ -188,37 +189,34 @@ func (k *Keyring) Recover(ctx context.Context, code, label string) error {
 	if err := k.Client.doJSON(ctx, http.MethodGet, "/v1/keys/recovery", nil, &rec); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-			return ErrKeysNotEnrolled
+			return nil, ErrKeysNotEnrolled
 		}
-		return err
+		return nil, err
 	}
 	pkcs8, err := OpenSym(rk, rec.RecoveryWrap, RecoveryAAD(k.AccountID))
 	if err != nil {
-		return ErrRecoveryCodeInvalid
+		return nil, ErrRecoveryCodeInvalid
 	}
 	ak, err := ParseAccountKey(pkcs8)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !bytes.Equal(ak.PublicKey().Bytes(), rec.PublicKey) {
-		return ErrAccountKeyMismatch
+		return nil, ErrAccountKeyMismatch
 	}
 	if err := k.RegisterDevice(ctx, label); err != nil && !isConflict(err) {
-		return err
+		return nil, err
 	}
 	if err := k.approve(ctx, ak, k.DeviceID(), k.DevicePublicKey()); err != nil && !isConflict(err) {
-		return err // a conflict means this device was already approved
+		return nil, err // a conflict means this device was already approved
 	}
-	return nil
+	return ak.PublicKey().Bytes(), nil
 }
 
-// Approve gives another of this account's devices the account key. The device's key is
-// fetched from the server and must hash to deviceID, which the user compared on screen.
-func (k *Keyring) Approve(ctx context.Context, deviceID string) error {
-	ak, err := k.AccountKey(ctx)
-	if err != nil {
-		return err
-	}
+// Approve gives another of this account's devices the account key (use
+// SecureNet.ApproveDevice, which checks the key against this device's pin). The device's
+// key is fetched from the server and must hash to deviceID, which the user compared.
+func (k *Keyring) Approve(ctx context.Context, ak *ecdh.PrivateKey, deviceID string) error {
 	var d keyDeviceWrap
 	if err := k.Client.doJSON(ctx, http.MethodGet, "/v1/keys/devices/"+url.PathEscape(deviceID), nil, &d); err != nil {
 		return err

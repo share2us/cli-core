@@ -151,14 +151,24 @@ type wrapTo struct {
 	RecipientPublicKey []byte `json:"recipient_public_key"`
 }
 
+// ErrConflictingEpochKeys: two wraps for one epoch opened to different keys, so someone
+// (possibly the server, via a member key it controls) is offering a forged one.
+var ErrConflictingEpochKeys = errors.New("two different keys are on offer for one sharenet epoch; refusing both (report this)")
+
 // SecureNet does the group-key work for one account on this device.
 type SecureNet struct {
 	Keys *Keyring
 	Pins *PinStore
-	ak   *ecdh.PrivateKey
+	// Unattended (the daemon) never accepts a key on first sight: it only wraps to, and
+	// accepts wraps from, keys already pinned interactively.
+	Unattended bool
+	ak         *ecdh.PrivateKey
 }
 
-func (s *SecureNet) accountKey(ctx context.Context) (*ecdh.PrivateKey, error) {
+// AccountKey opens this account's key and checks it against this device's pin of it, so
+// a server can't swap in an account key it holds (it knows every device's public key and
+// could wrap one of its own to us).
+func (s *SecureNet) AccountKey(ctx context.Context) (*ecdh.PrivateKey, error) {
 	if s.ak != nil {
 		return s.ak, nil
 	}
@@ -166,12 +176,46 @@ func (s *SecureNet) accountKey(ctx context.Context) (*ecdh.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.Pins.Check(s.Keys.AccountID, ak.PublicKey().Bytes(), s.Unattended); err != nil {
+		return nil, err
+	}
 	s.ak = ak
 	return ak, nil
 }
 
-// checkKey applies TOFU to another account's key; this account's own key must be the one
-// this device holds.
+func (s *SecureNet) accountKey(ctx context.Context) (*ecdh.PrivateKey, error) {
+	return s.AccountKey(ctx)
+}
+
+// Enrol creates the account key and pins it as this account's own.
+func (s *SecureNet) Enrol(ctx context.Context, label string) (string, error) {
+	code, pub, err := s.Keys.Enrol(ctx, label)
+	if err != nil {
+		return "", err
+	}
+	return code, s.Pins.Trust(s.Keys.AccountID, pub)
+}
+
+// Recover opens the account key with the recovery code (which authenticates it) and pins it.
+func (s *SecureNet) Recover(ctx context.Context, code, label string) error {
+	pub, err := s.Keys.Recover(ctx, code, label)
+	if err != nil {
+		return err
+	}
+	return s.Pins.Trust(s.Keys.AccountID, pub)
+}
+
+// ApproveDevice gives another device the (pinned) account key.
+func (s *SecureNet) ApproveDevice(ctx context.Context, deviceID string) error {
+	ak, err := s.AccountKey(ctx)
+	if err != nil {
+		return err
+	}
+	return s.Keys.Approve(ctx, ak, deviceID)
+}
+
+// checkKey applies TOFU to another account's key (first sight refused when unattended);
+// this account's own key must be the pinned one this device holds.
 func (s *SecureNet) checkKey(accountID string, pub, mine []byte) error {
 	if accountID == s.Keys.AccountID {
 		if !bytes.Equal(pub, mine) {
@@ -179,7 +223,38 @@ func (s *SecureNet) checkKey(accountID string, pub, mine []byte) error {
 		}
 		return nil
 	}
-	return s.Pins.Check(accountID, pub)
+	return s.Pins.Check(accountID, pub, s.Unattended)
+}
+
+// senderTrusted decides whether a wrap's sender may give this account an epoch key: it must
+// be this account's own pinned key, a key already trusted for the sender (any key trusted
+// for them, so wraps from before a reset, or from a member who has since left, still
+// open), or a CURRENT member's current key, accepted on first sight interactively. A key
+// first seen on a wrap from a non-member is never accepted, and nothing is pinned from a
+// wrap alone.
+func (s *SecureNet) senderTrusted(w EpochWrap, members map[string][]byte, mine []byte) error {
+	if w.WrappedByAccountID == s.Keys.AccountID {
+		if bytes.Equal(w.WrappedByPublicKey, mine) {
+			return nil
+		}
+		if ok, err := s.Pins.IsTrusted(s.Keys.AccountID, w.WrappedByPublicKey); err != nil || ok {
+			return err // an earlier own key, trusted before a reset
+		}
+		return &KeyChangedError{AccountID: w.WrappedByAccountID, Fingerprint: KeyFingerprint(w.WrappedByAccountID, w.WrappedByPublicKey)}
+	}
+	// Already trusted (pinned while they were a member): fine even if they have since left,
+	// since the wrap was made while they could.
+	if ok, err := s.Pins.IsTrusted(w.WrappedByAccountID, w.WrappedByPublicKey); err != nil || ok {
+		return err
+	}
+	current, isMember := members[w.WrappedByAccountID]
+	if !isMember {
+		return fmt.Errorf("a wrap from %s, who isn't a member of this sharenet, was ignored", w.WrappedByAccountID)
+	}
+	if !bytes.Equal(w.WrappedByPublicKey, current) {
+		return &KeyChangedError{AccountID: w.WrappedByAccountID, Fingerprint: KeyFingerprint(w.WrappedByAccountID, w.WrappedByPublicKey)}
+	}
+	return s.Pins.Check(w.WrappedByAccountID, current, s.Unattended)
 }
 
 // EpochKeys opens every epoch key this account can reach: its own wraps, then older epochs
@@ -190,10 +265,16 @@ func (s *SecureNet) EpochKeys(ctx context.Context, sharenetID string, st SecureS
 		return nil, err
 	}
 	mine := ak.PublicKey().Bytes()
+	members := map[string][]byte{}
+	for _, m := range st.Members {
+		if len(m.PublicKey) > 0 {
+			members[m.AccountID] = m.PublicKey
+		}
+	}
 	keys := map[int][]byte{}
 	var firstErr error
 	for _, w := range st.MyWraps {
-		if err := s.checkKey(w.WrappedByAccountID, w.WrappedByPublicKey, mine); err != nil {
+		if err := s.senderTrusted(w, members, mine); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -206,17 +287,26 @@ func (s *SecureNet) EpochKeys(ctx context.Context, sharenetID string, st SecureS
 			}
 			continue
 		}
+		if prev, ok := keys[w.Epoch]; ok && !bytes.Equal(prev, ek) {
+			return nil, ErrConflictingEpochKeys
+		}
 		keys[w.Epoch] = ek
 	}
 	links := append([]ChainLink(nil), st.Chain...)
 	sort.Slice(links, func(i, j int) bool { return links[i].Epoch > links[j].Epoch })
 	for _, l := range links {
 		newer, ok := keys[l.Epoch]
-		if !ok || keys[l.Epoch-1] != nil {
+		if !ok {
 			continue
 		}
 		older, err := OpenSym(newer, l.ChainWrap, EpochChainAAD(sharenetID, l.Epoch-1))
 		if err != nil {
+			continue
+		}
+		if have, ok := keys[l.Epoch-1]; ok {
+			if !bytes.Equal(have, older) {
+				return nil, ErrConflictingEpochKeys
+			}
 			continue
 		}
 		keys[l.Epoch-1] = older
