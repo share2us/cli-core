@@ -38,13 +38,24 @@ type Wrapped struct {
 	CT    []byte `json:"ct"`
 }
 
-// WrapV1 seals payload to an X25519 public key: ECDH(ephemeral, recipient) ->
-// HKDF-SHA256(salt = eph_pub || recipient_pub, info = purpose) -> AES-256-GCM.
-func WrapV1(recipientPub, payload []byte, purpose string) (Wrapped, error) {
-	return wrapV1(rand.Reader, recipientPub, payload, purpose)
+// WrapV1 seals payload from sender to recipient, authenticated (HPKE auth-mode style):
+//
+//	ikm  = X25519(eph, recipient) || X25519(sender, recipient)
+//	salt = eph_pub || sender_pub || recipient_pub
+//	key  = HKDF-SHA256(ikm, salt, info = purpose)
+//	ct   = AES-256-GCM(key, nonce, payload, aad)
+//
+// Only the holder of the sender's private key can produce a wrap the recipient opens
+// with the sender's public key, so a server that knows public keys can't forge one. aad
+// binds the context (sharenet, epoch, account), so a wrap can't be moved to another.
+func WrapV1(sender *ecdh.PrivateKey, recipientPub, payload []byte, purpose string, aad []byte) (Wrapped, error) {
+	return wrapV1(rand.Reader, sender, recipientPub, payload, purpose, aad)
 }
 
-func wrapV1(rnd io.Reader, recipientPub, payload []byte, purpose string) (Wrapped, error) {
+func wrapV1(rnd io.Reader, sender *ecdh.PrivateKey, recipientPub, payload []byte, purpose string, aad []byte) (Wrapped, error) {
+	if sender == nil {
+		return Wrapped{}, errors.New("wrap v1: sender key is required")
+	}
 	recipient, err := ecdh.X25519().NewPublicKey(recipientPub)
 	if err != nil {
 		return Wrapped{}, fmt.Errorf("recipient public key: %w", err)
@@ -53,11 +64,15 @@ func wrapV1(rnd io.Reader, recipientPub, payload []byte, purpose string) (Wrappe
 	if err != nil {
 		return Wrapped{}, err
 	}
-	shared, err := eph.ECDH(recipient)
+	dhE, err := eph.ECDH(recipient)
 	if err != nil {
 		return Wrapped{}, err
 	}
-	key, err := wrapKey(shared, eph.PublicKey().Bytes(), recipientPub, purpose)
+	dhS, err := sender.ECDH(recipient)
+	if err != nil {
+		return Wrapped{}, err
+	}
+	key, err := wrapKey(append(dhE, dhS...), eph.PublicKey().Bytes(), sender.PublicKey().Bytes(), recipientPub, purpose)
 	if err != nil {
 		return Wrapped{}, err
 	}
@@ -65,38 +80,51 @@ func wrapV1(rnd io.Reader, recipientPub, payload []byte, purpose string) (Wrappe
 	if _, err := io.ReadFull(rnd, nonce); err != nil {
 		return Wrapped{}, err
 	}
-	ct, err := gcmSeal(key, nonce, payload, nil)
+	ct, err := gcmSeal(key, nonce, payload, aad)
 	if err != nil {
 		return Wrapped{}, err
 	}
 	return Wrapped{Eph: eph.PublicKey().Bytes(), Nonce: nonce, CT: ct}, nil
 }
 
-// UnwrapV1 opens a wrap v1 envelope with the recipient's private key.
-func UnwrapV1(recipient *ecdh.PrivateKey, w Wrapped, purpose string) ([]byte, error) {
+// UnwrapV1 opens a wrap v1 envelope that senderPub made for recipient. Any malformed,
+// tampered, mis-addressed or forged envelope returns ErrSecureNetOpen (never a panic:
+// the envelope comes from the server and is untrusted).
+func UnwrapV1(recipient *ecdh.PrivateKey, senderPub []byte, w Wrapped, purpose string, aad []byte) ([]byte, error) {
+	if recipient == nil || len(w.Eph) != 32 || len(w.Nonce) != 12 || len(w.CT) < 16 || len(senderPub) != 32 {
+		return nil, ErrSecureNetOpen
+	}
 	eph, err := ecdh.X25519().NewPublicKey(w.Eph)
 	if err != nil {
 		return nil, ErrSecureNetOpen
 	}
-	shared, err := recipient.ECDH(eph)
+	sender, err := ecdh.X25519().NewPublicKey(senderPub)
 	if err != nil {
 		return nil, ErrSecureNetOpen
 	}
-	key, err := wrapKey(shared, w.Eph, recipient.PublicKey().Bytes(), purpose)
+	dhE, err := recipient.ECDH(eph)
+	if err != nil {
+		return nil, ErrSecureNetOpen
+	}
+	dhS, err := recipient.ECDH(sender)
+	if err != nil {
+		return nil, ErrSecureNetOpen
+	}
+	key, err := wrapKey(append(dhE, dhS...), w.Eph, senderPub, recipient.PublicKey().Bytes(), purpose)
 	if err != nil {
 		return nil, err
 	}
-	pt, err := gcmOpen(key, w.Nonce, w.CT, nil)
+	pt, err := gcmOpen(key, w.Nonce, w.CT, aad)
 	if err != nil {
 		return nil, ErrSecureNetOpen
 	}
 	return pt, nil
 }
 
-func wrapKey(shared, ephPub, recipientPub []byte, purpose string) ([]byte, error) {
-	salt := make([]byte, 0, len(ephPub)+len(recipientPub))
-	salt = append(append(salt, ephPub...), recipientPub...)
-	return hkdf.Key(sha256.New, shared, salt, purpose, 32)
+func wrapKey(ikm, ephPub, senderPub, recipientPub []byte, purpose string) ([]byte, error) {
+	salt := make([]byte, 0, len(ephPub)+len(senderPub)+len(recipientPub))
+	salt = append(append(append(salt, ephPub...), senderPub...), recipientPub...)
+	return hkdf.Key(sha256.New, ikm, salt, purpose, 32)
 }
 
 // NewAccountKey makes an account's X25519 key. MarshalAccountKey/ParseAccountKey move
@@ -148,7 +176,10 @@ func RecoveryKey(code string) ([]byte, error) {
 	c := strings.ToUpper(code)
 	c = strings.NewReplacer("-", "", " ", "", "0", "O", "1", "I", "8", "B").Replace(c)
 	raw, err := recoveryEnc.DecodeString(c)
-	if err != nil || len(raw) != 16 {
+	// Exact round trip: 128 bits leave 2 spare bits in the last character, which Go's
+	// decoder ignores; requiring re-encoding to match keeps one code per key and lets a
+	// strict browser decoder agree with Go.
+	if err != nil || len(raw) != 16 || recoveryEnc.EncodeToString(raw) != c {
 		return nil, errors.New("recovery code: not a valid code")
 	}
 	return hkdf.Key(sha256.New, raw, nil, recoveryInfo, 32)
@@ -184,11 +215,25 @@ func OpenSym(key, sealed, aad []byte) ([]byte, error) {
 func EpochChainAAD(sharenetID string, epoch int) []byte {
 	return []byte("share2us/secure-sharenet/epoch-chain/v1|" + sharenetID + "|" + strconv.Itoa(epoch))
 }
-func FileKeyAAD(sharenetID string, epoch int) []byte {
-	return []byte("share2us/secure-sharenet/file-key/v1|" + sharenetID + "|" + strconv.Itoa(epoch))
+
+// fileID is the file's stable id (its object key, known before upload), so a file key or
+// name can't be swapped onto another file of the same epoch.
+func FileKeyAAD(sharenetID string, epoch int, fileID string) []byte {
+	return []byte("share2us/secure-sharenet/file-key/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + fileID)
 }
-func FileNameAAD(sharenetID string, epoch int) []byte {
-	return []byte("share2us/secure-sharenet/file-name/v1|" + sharenetID + "|" + strconv.Itoa(epoch))
+func FileNameAAD(sharenetID string, epoch int, fileID string) []byte {
+	return []byte("share2us/secure-sharenet/file-name/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + fileID)
+}
+
+// EpochKeyAAD binds an epoch key wrapped to an account to its sharenet, epoch and
+// recipient account, so the server can't hand it out as another sharenet's or epoch's.
+func EpochKeyAAD(sharenetID string, epoch int, accountID string) []byte {
+	return []byte("share2us/secure-sharenet/epoch-key/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + accountID)
+}
+
+// DeviceWrapAAD binds an account key wrapped to a device to the account and device.
+func DeviceWrapAAD(accountID, deviceID string) []byte {
+	return []byte("share2us/secure-sharenet/ak-to-device/v1|" + accountID + "|" + deviceID)
 }
 func RecoveryAAD(accountID string) []byte {
 	return []byte("share2us/secure-sharenet/recovery-wrap/v1|" + accountID)
