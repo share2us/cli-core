@@ -165,6 +165,13 @@ func (p Peer) Addr() string {
 // timeout elapses, de-duplicated by instance name and sorted by name. It powers
 // a "nearby devices" picker (Discover finds one by name; Browse finds them all).
 func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
+	return BrowseUntil(ctx, timeout, nil)
+}
+
+// BrowseUntil is Browse that returns as soon as stop accepts a peer, so a caller looking
+// for one known device doesn't sit out the whole timeout (an agent send waited the full
+// browse every time, 2026-11-26).
+func BrowseUntil(ctx context.Context, timeout time.Duration, stop func(Peer) bool) ([]Peer, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		return nil, fmt.Errorf("lanshare: mdns resolver: %w", err)
@@ -225,6 +232,9 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Peer, error) {
 				FileSize:            fsize,
 				AppVersion:          txtValue(e.Text, "app"),
 				MinPeer:             txtValue(e.Text, "min"),
+			}
+			if stop != nil && stop(seen[key]) {
+				cancel()
 			}
 		}
 		close(done)
