@@ -78,6 +78,9 @@ type AgentInjectInput struct {
 	// TargetAgentID is the agent the sender means to reach (signed, v2). The
 	// server refuses the hop if the target session is not that agent.
 	TargetAgentID string `json:"target_agent_id,omitempty"`
+	// SenderSessionID is the agent session sending this hop, so the final state can be
+	// delivered back into it (not signed: it only routes the outcome to this device).
+	SenderSessionID string `json:"sender_session_id,omitempty"`
 }
 
 // AgentInjectResult is the server's response to an inject.
@@ -280,6 +283,32 @@ type AgentGrant struct {
 
 // AgentApproveOnce approves a single pending request WITHOUT granting the sender
 // standing access (target side).
+// AgentCancel withdraws a request this device sent that hasn't started running.
+func (c *Client) AgentCancel(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/cancel", nil, nil)
+}
+
+// AgentUpdate is the final state of a request this device sent.
+type AgentUpdate struct {
+	ID              string `json:"id"`
+	Status          string `json:"status"` // done, failed, rejected or cancelled
+	Result          string `json:"result"`
+	TargetSessionID string `json:"target_session_id"`
+	Tool            string `json:"tool"`
+	SenderSessionID string `json:"sender_session_id,omitempty"`
+	CompletedAt     string `json:"completed_at"`
+}
+
+// AgentUpdates returns, once each, the final states of requests this device sent (the
+// server marks them delivered).
+func (c *Client) AgentUpdates(ctx context.Context) ([]AgentUpdate, error) {
+	var out struct {
+		Updates []AgentUpdate `json:"updates"`
+	}
+	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/updates", nil, &out)
+	return out.Updates, err
+}
+
 func (c *Client) AgentApproveOnce(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodPost, "/v1/agent/inject/"+url.PathEscape(id)+"/approve", nil, nil)
 }

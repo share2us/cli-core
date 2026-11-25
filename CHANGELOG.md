@@ -5,6 +5,11 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Added
+
+- Agent bridge: `AgentCancel`, `AgentUpdates` (final states of requests this device sent,
+  handed back once each) and `AgentInjectInput.SenderSessionID`.
+
 ### Fixed
 
 - Uploads and downloads refused by object storage (R2) now report the storage error code
