@@ -127,6 +127,10 @@ type AgentInjectState struct {
 	Result string `json:"result"`
 	// TargetDeviceName is set for the sender only (servers before 2026-11-25 omit it).
 	TargetDeviceName string `json:"target_device_name,omitempty"`
+	// RFC 3339 times; empty until reached (and from servers before 2026-11-26).
+	CreatedAt   string `json:"created_at,omitempty"`
+	DeliveredAt string `json:"delivered_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
 }
 
 // RegisterAgentSession advertises (or heartbeats) a live session.

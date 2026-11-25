@@ -5,6 +5,10 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Added
+
+- `AgentInjectState.CreatedAt`, `DeliveredAt`, `CompletedAt` (request timing).
+
 ### Changed
 
 - `lanshare.BrowseUntil`: stop browsing as soon as a wanted peer answers. A direct LAN agent
