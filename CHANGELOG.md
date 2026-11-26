@@ -7,6 +7,12 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Sharenet management from a device: `CreateSharenet`, `GetSharenet`, `InviteToSharenet`,
+  `RemoveSharenetMember`, `CreateSharenetProject`, `CreateJoinCode` (team codes: uses and
+  lifetime), `ListJoinRequests`, `DecideJoinRequest`, `AddMyAgents`.
+
+### Added
+
 - `AgentInjectState.CreatedAt`, `DeliveredAt`, `CompletedAt` (request timing).
 
 ### Changed
