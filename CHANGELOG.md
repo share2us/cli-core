@@ -7,6 +7,11 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Owner approvals (ADR-052): `CreateApproval`, `GetApproval`, `ConsumeApproval`,
+  `ContinueApproval`, `ListActionGrants`, `RevokeActionGrant`.
+
+### Added
+
 - `AgentJoinResult.ProjectID`.
 
 ### Added
