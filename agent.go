@@ -118,6 +118,9 @@ type AgentRequest struct {
 	ProjectID     string `json:"project_id,omitempty"`
 	SenderAgentID string `json:"sender_agent_id,omitempty"`
 	TargetAgentID string `json:"target_agent_id,omitempty"`
+	// ProjectSecure: the server says the project's sharenet is Secure, so the reply must be
+	// sealed or withheld (ADR-053). Not part of the signed claims; it can only add a duty.
+	ProjectSecure bool `json:"project_secure,omitempty"`
 }
 
 // AgentInjectState is a sender's view of a request's progress.
