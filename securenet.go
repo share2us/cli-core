@@ -227,6 +227,12 @@ func FileNameAAD(sharenetID string, epoch int, fileID string) []byte {
 
 // EpochKeyAAD binds an epoch key wrapped to an account to its sharenet, epoch and
 // recipient account, so the server can't hand it out as another sharenet's or epoch's.
+// MessageAAD binds a sealed chat message to its sharenet, key, id and channel, so the
+// server can't move it to another channel or replay it as another message (ADR-053).
+func MessageAAD(sharenetID string, epoch int, msgID, channel string) []byte {
+	return []byte("share2us/secure-sharenet/message/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + msgID + "|" + channel)
+}
+
 func EpochKeyAAD(sharenetID string, epoch int, accountID string) []byte {
 	return []byte("share2us/secure-sharenet/epoch-key/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + accountID)
 }

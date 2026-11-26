@@ -511,3 +511,72 @@ func (s *SecureNet) OpenFile(ctx context.Context, sharenetID string, epoch int, 
 	}
 	return dk, string(name), nil
 }
+
+// SealMessage encrypts a chat message for a Secure ShareNet channel under the current
+// epoch key (rotating first when due), filling BodyCT, Epoch and MsgID.
+func (s *SecureNet) SealMessage(ctx context.Context, sharenetID string, m *SharenetMessage) error {
+	st, err := s.Keys.Client.SecureState(ctx, sharenetID)
+	if err != nil {
+		return err
+	}
+	if !st.Secure {
+		return ErrNotSecureSharenet
+	}
+	if st.CurrentEpoch == 0 || st.NeedsRotation {
+		if _, err := s.Rotate(ctx, sharenetID, false); err != nil {
+			return fmt.Errorf("rotate the sharenet key: %w", err)
+		}
+		if st, err = s.Keys.Client.SecureState(ctx, sharenetID); err != nil {
+			return err
+		}
+	}
+	keys, err := s.EpochKeys(ctx, sharenetID, st)
+	if err != nil {
+		return err
+	}
+	ek, ok := keys[st.CurrentEpoch]
+	if !ok {
+		return ErrNoEpochKeyHere
+	}
+	idRaw := make([]byte, 16)
+	if _, err := rand.Read(idRaw); err != nil {
+		return err
+	}
+	m.MsgID, m.Epoch = base64.RawURLEncoding.EncodeToString(idRaw), st.CurrentEpoch
+	m.BodyCT, err = SealSym(ek, []byte(m.Body), MessageAAD(sharenetID, m.Epoch, m.MsgID, m.Channel))
+	m.Body = ""
+	return err
+}
+
+// OpenMessages decrypts the Secure messages among events in place (Body filled). Ones this
+// device can't open yet keep an empty Body; the error is returned only when no key loads.
+func (s *SecureNet) OpenMessages(ctx context.Context, sharenetID string, events []SharenetEvent) error {
+	need := false
+	for _, e := range events {
+		if len(e.BodyCT) > 0 {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return nil
+	}
+	st, err := s.Keys.Client.SecureState(ctx, sharenetID)
+	if err != nil {
+		return err
+	}
+	keys, err := s.EpochKeys(ctx, sharenetID, st)
+	if err != nil {
+		return err
+	}
+	for i, e := range events {
+		ek, ok := keys[e.Epoch]
+		if len(e.BodyCT) == 0 || !ok {
+			continue
+		}
+		if pt, err := OpenSym(ek, e.BodyCT, MessageAAD(sharenetID, e.Epoch, e.RefID, e.Channel)); err == nil {
+			events[i].Body = string(pt)
+		}
+	}
+	return nil
+}

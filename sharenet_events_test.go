@@ -42,3 +42,31 @@ func TestSharenetEventCalls(t *testing.T) {
 		t.Fatalf("read = %q %v", readBody, err)
 	}
 }
+
+func TestMessageSealIsBoundToItsChannel(t *testing.T) {
+	ek := make([]byte, 32)
+	ct, err := SealSym(ek, []byte("deploy at 5"), MessageAAD("n-1", 3, "mid-0000000000000", "p-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pt, err := OpenSym(ek, ct, MessageAAD("n-1", 3, "mid-0000000000000", "p-1")); err != nil || string(pt) != "deploy at 5" {
+		t.Fatalf("open = %q %v", pt, err)
+	}
+	if _, err := OpenSym(ek, ct, MessageAAD("n-1", 3, "mid-0000000000000", "general")); err == nil {
+		t.Fatal("a message moved to another channel still opened")
+	}
+}
+
+func TestPostSharenetMessage(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 42})
+	}))
+	defer srv.Close()
+	id, err := NewClient(srv.URL, "s2s_x").PostSharenetMessage(context.Background(), "n-1", SharenetMessage{Channel: "p-1", Body: "hi", AgentID: "agt_x"})
+	if err != nil || id != 42 || got["body"] != "hi" || got["agent_id"] != "agt_x" {
+		t.Fatalf("post = %d %v %v", id, got, err)
+	}
+}
