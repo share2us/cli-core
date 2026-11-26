@@ -12,6 +12,8 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Sharenet timeline (ADR-053): `ListSharenetEvents` (channel, after/before cursor, unread
+  counts) and `MarkSharenetRead`; `SharenetSummary.Unread`.
 - Owner approvals (ADR-052): `CreateApproval`, `GetApproval`, `ConsumeApproval`,
   `ContinueApproval`, `ListActionGrants`, `RevokeActionGrant`.
 
