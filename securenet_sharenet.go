@@ -54,6 +54,7 @@ type SharenetSummary struct {
 	Name   string `json:"name"`
 	Role   string `json:"role"`
 	Secure bool   `json:"secure"`
+	Unread int    `json:"unread,omitempty"` // timeline events not yet read (ADR-053)
 }
 
 type SharenetProject struct {
