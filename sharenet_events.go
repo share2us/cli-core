@@ -17,6 +17,10 @@ type SharenetEvent struct {
 	Kind        string          `json:"kind"`
 	RefID       string          `json:"ref_id,omitempty"`
 	Body        string          `json:"body,omitempty"`
+	BodyCT      []byte          `json:"body_ct,omitempty"`
+	Epoch       int             `json:"epoch,omitempty"`
+	ParentID    int64           `json:"parent_id,omitempty"`
+	Edited      bool            `json:"edited,omitempty"`
 	Meta        json.RawMessage `json:"meta,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 	Deleted     bool            `json:"deleted,omitempty"`
@@ -81,4 +85,36 @@ func (c *Client) ListSharenetEvents(ctx context.Context, sharenetID string, q Sh
 func (c *Client) MarkSharenetRead(ctx context.Context, sharenetID, channel string, lastEventID int64) error {
 	body := map[string]any{"channel": channel, "last_event_id": lastEventID}
 	return c.doJSON(ctx, http.MethodPost, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/events/read", body, nil)
+}
+
+// SharenetMessage is a chat message to post (ADR-053 Phase 2). Body for a standard
+// sharenet; BodyCT + Epoch + MsgID for a Secure one (see SecureNet.SealMessage).
+type SharenetMessage struct {
+	Channel  string   `json:"channel"`
+	Body     string   `json:"body,omitempty"`
+	BodyCT   []byte   `json:"body_ct,omitempty"`
+	Epoch    int      `json:"epoch,omitempty"`
+	MsgID    string   `json:"msg_id,omitempty"`
+	ParentID int64    `json:"parent_id,omitempty"`
+	AgentID  string   `json:"agent_id,omitempty"`
+	Mentions []string `json:"mentions,omitempty"`
+}
+
+// PostSharenetMessage posts into a channel and returns the new event id.
+func (c *Client) PostSharenetMessage(ctx context.Context, sharenetID string, m SharenetMessage) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	err := c.doJSON(ctx, http.MethodPost, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/messages", m, &out)
+	return out.ID, err
+}
+
+// EditSharenetMessage replaces one of your messages (same body rules as posting).
+func (c *Client) EditSharenetMessage(ctx context.Context, sharenetID string, eventID int64, m SharenetMessage) error {
+	return c.doJSON(ctx, http.MethodPatch, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/messages/"+strconv.FormatInt(eventID, 10), m, nil)
+}
+
+// DeleteSharenetMessage removes a message (yours, or any as the owner/a manager).
+func (c *Client) DeleteSharenetMessage(ctx context.Context, sharenetID string, eventID int64) error {
+	return c.doJSON(ctx, http.MethodDelete, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/messages/"+strconv.FormatInt(eventID, 10), nil, nil)
 }
