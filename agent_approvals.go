@@ -35,6 +35,8 @@ type ApprovalState struct {
 	RequestID string `json:"request_id,omitempty"`
 	Consumed  bool   `json:"consumed"`
 	Continued bool   `json:"continued"`
+	// Note: what the owner wrote with the decision, for the agent (may be empty).
+	Note string `json:"note,omitempty"`
 }
 
 type ActionGrant struct {
