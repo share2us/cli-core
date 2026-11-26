@@ -8,7 +8,7 @@ reaches users only when one of those is released.
 ### Added
 
 - Owner approvals (ADR-052): `CreateApproval`, `GetApproval`, `ConsumeApproval`,
-  `ContinueApproval`, `ListAgentGrants`, `RevokeAgentGrant`.
+  `ContinueApproval`, `ListActionGrants`, `RevokeActionGrant`.
 
 ### Added
 

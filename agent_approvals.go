@@ -37,7 +37,7 @@ type ApprovalState struct {
 	Continued bool   `json:"continued"`
 }
 
-type AgentGrant struct {
+type ActionGrant struct {
 	ID          string     `json:"id"`
 	AgentID     string     `json:"agent_id"`
 	Scope       string     `json:"scope"` // command | all
@@ -79,14 +79,14 @@ func (c *Client) ContinueApproval(ctx context.Context, id string) (requestID str
 	return out.RequestID, err
 }
 
-func (c *Client) ListAgentGrants(ctx context.Context) ([]AgentGrant, error) {
+func (c *Client) ListActionGrants(ctx context.Context) ([]ActionGrant, error) {
 	var out struct {
-		Grants []AgentGrant `json:"grants"`
+		Grants []ActionGrant `json:"grants"`
 	}
 	err := c.doJSON(ctx, http.MethodGet, "/v1/agent/grants", nil, &out)
 	return out.Grants, err
 }
 
-func (c *Client) RevokeAgentGrant(ctx context.Context, id string) error {
+func (c *Client) RevokeActionGrant(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/agent/grants/"+url.PathEscape(id), nil, nil)
 }
