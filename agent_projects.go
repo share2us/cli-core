@@ -96,6 +96,7 @@ func (c *Client) WithdrawAgent(ctx context.Context, projectID, membershipID stri
 type AgentJoinResult struct {
 	// Status is "pending" (a host must approve in the portal) or "admitted".
 	Status       string `json:"status"`
+	ProjectID    string `json:"project_id,omitempty"`
 	RequestID    string `json:"request_id,omitempty"`
 	ProjectName  string `json:"project_name"`
 	SharenetName string `json:"sharenet_name"`
