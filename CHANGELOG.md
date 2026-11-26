@@ -12,6 +12,7 @@ reaches users only when one of those is released.
 
 ### Added
 
+- `ApprovalState.Note`: the owner's note with an approval decision.
 - `AgentRequest.Kind`, `ChannelPrompt`, `SenderLabel`: channel tasks (@agent mentions, ADR-053).
 - `AgentRequest.ProjectSecure` (server-asserted): the target must seal or withhold its reply.
 - Secure task replies (ADR-053): `SecureNet.SealTaskReply` / `OpenTaskReply`,
