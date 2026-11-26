@@ -233,6 +233,11 @@ func MessageAAD(sharenetID string, epoch int, msgID, channel string) []byte {
 	return []byte("share2us/secure-sharenet/message/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + msgID + "|" + channel)
 }
 
+// TaskReplyAAD binds a sealed task reply to its sharenet, key and request (ADR-053).
+func TaskReplyAAD(sharenetID string, epoch int, requestID string) []byte {
+	return []byte("share2us/secure-sharenet/task-reply/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + requestID)
+}
+
 func EpochKeyAAD(sharenetID string, epoch int, accountID string) []byte {
 	return []byte("share2us/secure-sharenet/epoch-key/v1|" + sharenetID + "|" + strconv.Itoa(epoch) + "|" + accountID)
 }

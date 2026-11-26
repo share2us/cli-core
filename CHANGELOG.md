@@ -12,6 +12,8 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Secure task replies (ADR-053): `SecureNet.SealTaskReply` / `OpenTaskReply`,
+  `IsSealedReply`, `ParseSealedReply`, `TaskReplyAAD` (bound to sharenet, epoch, request).
 - Sharenet chat (ADR-053 Phase 2): `PostSharenetMessage`, `EditSharenetMessage`,
   `DeleteSharenetMessage`; `SecureNet.SealMessage` / `OpenMessages` with `MessageAAD`
   (bound to sharenet, epoch, message id and channel); events carry `body_ct`, `epoch`,
