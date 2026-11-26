@@ -61,10 +61,17 @@ const dialTimeout = 400 * time.Millisecond
 // ordinary GUI/status probe cheap; only these session-bound ops wait longer.
 const channelCallTimeout = 12 * time.Second
 
+// approvalCallTimeout: the approval ops call the API (grants, filing a request, its status)
+// before answering. With the 400 ms default the hook gave up while the daemon still filed the
+// request, so the blocked command was refused without waiting for the owner (2026-11-26).
+const approvalCallTimeout = 25 * time.Second
+
 func requestTimeout(op string) time.Duration {
 	switch op {
 	case "channel-poll", "channel-report", "channel-turn-ended", "channel-abandon-typed", "channel-guard-ready":
 		return channelCallTimeout
+	case "approval-check", "approval-status", "approval-park", "channel-denied":
+		return approvalCallTimeout
 	default:
 		return dialTimeout
 	}

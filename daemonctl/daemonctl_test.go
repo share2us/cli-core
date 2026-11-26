@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	clicore "github.com/share2us/cli-core"
 )
@@ -92,5 +93,16 @@ func TestQueryNoDaemon(t *testing.T) {
 	}
 	if Running() || OwnsReceiver() {
 		t.Fatal("Running/OwnsReceiver true with no daemon")
+	}
+}
+
+func TestApprovalOpsWaitForTheAPI(t *testing.T) {
+	for _, op := range []string{"approval-check", "approval-status", "approval-park"} {
+		if requestTimeout(op) < 10*time.Second {
+			t.Errorf("%s: %s is too short for an API round-trip", op, requestTimeout(op))
+		}
+	}
+	if requestTimeout("status") != dialTimeout {
+		t.Error("the cheap status probe must stay short")
 	}
 }

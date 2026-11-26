@@ -5,6 +5,11 @@ reaches users only when one of those is released.
 
 ## [Unreleased]
 
+### Fixed
+
+- daemonctl: the owner-approval ops get a 25 s round-trip (they call the API); with the
+  400 ms default the guard hook refused a blocked command without waiting for the owner.
+
 ### Added
 
 - Owner approvals (ADR-052): `CreateApproval`, `GetApproval`, `ConsumeApproval`,
