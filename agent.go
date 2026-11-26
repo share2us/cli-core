@@ -121,6 +121,13 @@ type AgentRequest struct {
 	// ProjectSecure: the server says the project's sharenet is Secure, so the reply must be
 	// sealed or withheld (ADR-053). Not part of the signed claims; it can only add a duty.
 	ProjectSecure bool `json:"project_secure,omitempty"`
+	// Kind "channel" (ADR-053): an @agent mention in a sharenet project. It has no sending
+	// device or signature; the server vouches for SenderLabel, and ChannelPrompt is the
+	// message every project member already sees. Receivers run it under their guard and may
+	// refuse channel tasks per agent.
+	Kind          string `json:"kind,omitempty"`
+	ChannelPrompt string `json:"channel_prompt,omitempty"`
+	SenderLabel   string `json:"sender_label,omitempty"`
 }
 
 // AgentInjectState is a sender's view of a request's progress.
