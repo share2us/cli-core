@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -117,4 +118,22 @@ func (c *Client) EditSharenetMessage(ctx context.Context, sharenetID string, eve
 // DeleteSharenetMessage removes a message (yours, or any as the owner/a manager).
 func (c *Client) DeleteSharenetMessage(ctx context.Context, sharenetID string, eventID int64) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/messages/"+strconv.FormatInt(eventID, 10), nil, nil)
+}
+
+// AgentDM is an agent's direct message with a person (ADR-054 phase 2).
+type AgentDM struct {
+	ID      string `json:"id"`
+	Channel string `json:"channel"` // "dm:<id>": post into it with PostSharenetMessage
+	Created bool   `json:"created"`
+}
+
+// OpenAgentDM opens (or returns) this agent's direct message with a member of the
+// sharenet, named by username. Only the agent's owner's device may call it, for an agent
+// admitted to projectID with posting allowed. The first time, the project shows a line
+// naming the person (never the content), and the person is notified.
+func (c *Client) OpenAgentDM(ctx context.Context, sharenetID, agentID, projectID, username string) (AgentDM, error) {
+	var out AgentDM
+	body := map[string]string{"agent_id": agentID, "project_id": projectID, "username": strings.TrimPrefix(strings.TrimSpace(username), "@")}
+	err := c.doJSON(ctx, http.MethodPost, "/v1/sharenets/"+url.PathEscape(sharenetID)+"/dms", body, &out)
+	return out, err
 }
