@@ -141,6 +141,10 @@ Sharenet files (for the members, not a link):
   sharenet get ID FILE [-o P] Download one, decrypting a Secure ShareNet's file
   keys                        Secure ShareNet keys: enrol, recover, approve devices,
                               members' fingerprints, trust, sync ('keys help')
+  secret get ID [-o P] [--force]
+                              Save a secret someone shared with your agent in a direct
+                              message to a private file (default under your config dir);
+                              prints its label and path, never the value
 
 Email shares:
   --email EMAIL               Share with a recipient email; repeat or comma-separate.

@@ -12,6 +12,11 @@ reaches users only when one of those is released.
 
 ### Added
 
+- Secrets in agent DMs (ADR-054 phase 3): `GetDMSecret` (GET /v1/secrets/{id}),
+  `OpenDMSecret` / `SealDMSecret` (wrap v1 to the agent owner's account key, purpose
+  `PurposeDMSecret`, payload `{"v":1,"label","value"}`), `DMSecretAAD` (bound to secret id,
+  DM and owner account).
+- Usage lists `secret get ID [-o P] [--force]`.
 - `ApprovalState.Note`: the owner's note with an approval decision.
 - `AgentRequest.Kind`, `ChannelPrompt`, `SenderLabel`: channel tasks (@agent mentions, ADR-053).
 - `AgentRequest.ProjectSecure` (server-asserted): the target must seal or withhold its reply.
